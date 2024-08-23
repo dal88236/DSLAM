@@ -1785,6 +1785,16 @@ bool Tracking::PredictStateIMU()
     return false;
 }
 
+void Tracking::DetermineStaticPoints() 
+{
+    // TODO
+    // build graph based on tracked map points
+    for (int i=0; i<mCurrentFrame.N; i++)
+    {
+        MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+    }
+}
+
 void Tracking::ResetFrameIMU()
 {
     // TODO To implement...
@@ -1953,6 +1963,11 @@ void Tracking::Track()
                     bOK = TrackWithMotionModel();
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
+                    else
+                    {
+                        Verbose::PrintMess("TRACK: Tracking succeed. Determine static points tracked", Verbose::VERBOSITY_DEBUG);
+                        DetermineStaticPoints();
+                    }
                 }
 
 

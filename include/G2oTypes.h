@@ -842,6 +842,18 @@ public:
     Eigen::Vector3d dtij;
 };
 
+class EdgePointCorrelation : public g2o::BaseBinaryEdge<2, Eigen::Vector2d, g2o::VertexSBAPointXYZ, g2o::VertexSBAPointXYZ>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    EdgePointCorrelation(const Eigen::Vector3d& mapPointPos1, const Eigen::Vector3d& mapPointPos2) {
+
+    }
+
+    // Eigen:
+}; // class EdgePointCorrelation
+
 } //namespace ORB_SLAM2
 
 #endif // G2OTYPES_H

@@ -131,6 +131,10 @@ public:
     void SetBadFlag();
     bool isBad();
 
+    void SetMarked();
+    void SetUnmarked();
+    bool isMarked();
+
     void Replace(MapPoint* pMP);    
     MapPoint* GetReplaced();
 
@@ -234,6 +238,8 @@ protected:
 
      // Bad flag (we do not currently erase MapPoint from memory)
      bool mbBad;
+     // Mark flag (for static point determination)
+     bool mbMarked;
      MapPoint* mpReplaced;
      // For save relation without pointer, this is necessary for save/load function
      long long int mBackupReplacedId;
