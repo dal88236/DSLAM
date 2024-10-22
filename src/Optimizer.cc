@@ -18,7 +18,8 @@
 
 
 #include "Optimizer.h"
-
+#include "GraphBuilder.h"
+#include "SimpleGraph.h"
 
 #include <complex>
 
@@ -37,7 +38,10 @@
 #include "G2oTypes.h"
 #include "Converter.h"
 
-#include<mutex>
+#include <mutex>
+#include <unordered_set>
+#include <unordered_map>
+#include <chrono>
 
 #include "OptimizableTypes.h"
 
@@ -860,6 +864,9 @@ int Optimizer::PoseOptimization(Frame *pFrame)
         MapPoint* pMP = pFrame->mvpMapPoints[i];
         if(pMP)
         {
+            // Skip unmarked points
+            if(!pMP->isMarked()) continue;
+
             //Conventional SLAM
             if(!pFrame->mpCamera2){
                 // Monocular observation
@@ -1147,7 +1154,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         {
             MapPoint* pMP = *vit;
             if(pMP)
-                if(!pMP->isBad() && pMP->GetMap() == pCurrentMap)
+                if(!pMP->isBad() && pMP->isMarked() && pMP->GetMap() == pCurrentMap)
                 {
 
                     if(pMP->mnBALocalForKF!=pKF->mnId)
@@ -1309,7 +1316,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     obs << kpUn.pt.x, kpUn.pt.y;
 
                     ORB_SLAM3::EdgeSE3ProjectXYZ* e = new ORB_SLAM3::EdgeSE3ProjectXYZ();
-
+                    if(optimizer.vertex(id) == NULL || optimizer.vertex(pKFi->mnId) == NULL)
+                        continue;
                     e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
@@ -1337,7 +1345,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                     obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
 
                     g2o::EdgeStereoSE3ProjectXYZ* e = new g2o::EdgeStereoSE3ProjectXYZ();
-
+                    if(optimizer.vertex(id) == NULL || optimizer.vertex(pKFi->mnId) == NULL)
+                        continue;
                     e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
@@ -1495,6 +1504,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     }
 
     pMap->IncreaseChangeIndex();
+
 }
 
 
@@ -5585,6 +5595,823 @@ void Optimizer::OptimizeEssentialGraph4DoF(Map* pMap, KeyFrame* pLoopKF, KeyFram
         pMP->UpdateNormalAndDepth();
     }
     pMap->IncreaseChangeIndex();
+}
+
+Eigen::Matrix3d CalculateCovarianceOfDepthMeasurement(int u, int v, cv::Mat& imDepth, float fx, float fy, float cx, float cy, bool applyRegularization=false)
+{
+    Eigen::Matrix3d cov;
+
+    // Define W kernel
+    static Eigen::Matrix3d W = (Eigen::Matrix3d() << 0.0625, 0.125, 0.0625, 
+                                                     0.125,  0.25,  0.125,
+                                                     0.0625, 0.125, 0.0625).finished();
+    constexpr float sigmau = 1.0f;
+    constexpr float sigma = 1.0f;
+    float meanc = 0.0f;
+    float sigmacSq = 0.0f;
+
+    for(int y=0; y<3; y++)
+    {
+        float* row = imDepth.ptr<float>(v+y-1);
+
+        for(int x=0; x<3; x++)
+        {
+            float d = row[u+x-1];
+            meanc += W(x, y)*d;
+            float sigmad = sigma*d*d/fy;
+            sigmacSq += W(x, y)*(sigmad*sigmad+d*d);
+        }
+    }
+
+    sigmacSq -= meanc*meanc;
+
+    cov(0, 0) = (sigmacSq*(u-cx)*(u-cx)+sigmau*sigmau*(meanc*meanc+sigmacSq))/(fx*fx);
+    cov(1, 1) = (sigmacSq*(v-cy)*(v-cy)+sigma*sigma*(meanc*meanc+sigmacSq))/(fy*fy);
+    cov(2, 2) = sigmacSq;
+    cov(0, 2) = cov(2, 0) = sigmacSq*(u-cx)/fx;
+    cov(1, 2) = cov(2, 1) = sigmacSq*(v-cy)/fy;
+    cov(0, 1) = cov(1, 0) = sigmacSq*(u-cx)*(v-cy)/(fx*fy);
+
+    if(applyRegularization)
+    {
+        constexpr float lambda = 0.0001;
+        cov += lambda * Eigen::Matrix3d::Identity();
+    }
+
+    return cov;
+}
+
+int frame_count = 0;
+void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, cv::Mat& imLfDepth, cv::Mat& imCfDepth, Delaunay* dt)
+{
+    g2o::SparseOptimizer optimizer;
+    ORB_SLAM3::BlockSolver_3_3::LinearSolverType * linearSolver =
+            new g2o::LinearSolverDense<ORB_SLAM3::BlockSolver_3_3::PoseMatrixType>();
+    ORB_SLAM3::BlockSolver_3_3 * solver_ptr = new ORB_SLAM3::BlockSolver_3_3(linearSolver);
+
+    g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
+    optimizer.setAlgorithm(solver);
+    optimizer.setVerbose(true);
+
+    // Set MapPoint vertices
+    const int N = pCurrentFrame->N;
+    const int edges = dt->number_of_finite_edges();
+    vector<MapPoint*> vpMapPoints;
+    vpMapPoints.reserve(N);
+    vector<EdgePointCorrelation*> vpEdgesPointCorrelation;
+    vpEdgesPointCorrelation.reserve(edges);
+    vector<int> measurementsOfEdge(edges, 0);
+    vector<pair<unsigned long, unsigned long>> vnVerticesId(edges);
+
+    Graph graph;
+
+    std::cout << "Count: " << frame_count++ << std::endl;
+    std::cout << "Tpw: " << pLastFrame->GetPose().matrix() << std::endl;
+    std::cout << "Tcw: " << pCurrentFrame->GetPose().matrix() << std::endl;
+
+    // g2o::VertexSE3Expmap* vpSE3 = new g2o::VertexSE3Expmap();
+    // VertexSO3* vlSO3 = new VertexSO3;
+    Sophus::SE3d Tlw = pLastFrame->GetPose().cast<double>();
+    // vlSO3->setEstimate(Sophus::SO3d(Tpw.rotationMatrix()).log());
+    // vlSO3->setId(0);
+    // vlSO3->setFixed(true);
+    // optimizer.addVertex(vlSO3);
+
+    // g2o::VertexSE3Expmap* vcSE3 = new g2o::VertexSE3Expmap();
+    
+    // VertexSO3* vcSO3 = new VertexSO3;
+    Sophus::SE3d Tcw = pCurrentFrame->GetPose().cast<double>();
+    // vcSO3->setEstimate(Sophus::SO3d(Tcw.rotationMatrix()).log());
+    // vcSO3->setId(1);
+    // vcSO3->setFixed(false);
+    // optimizer.addVertex(vcSO3);
+
+    const double deltaPointCorreltation = sqrt(7.816);
+
+    std::unordered_set<unsigned long> sId;
+
+    int count = 0;
+
+    {
+        unique_lock<mutex> lock(MapPoint::mGlobalMutex);
+
+        for(int i=0; i<N; i++)
+        {
+            MapPoint* pMP = pCurrentFrame->mvpMapPoints[i];
+            if(pMP)
+            {
+                if(!pMP->isMarked())
+                    continue;
+
+                const unsigned long nMPid = pMP->mnId;
+                if(!pLastFrame->mhMapPointsIDIdx.count(nMPid)) continue;
+                if(sId.count(nMPid)) continue;
+                sId.insert(nMPid);
+
+                g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
+                Eigen::Vector3d eigP3Dw = pMP->GetWorldPos().cast<double>();
+                vPoint->setEstimate(eigP3Dw);
+                vPoint->setId(nMPid);
+                vPoint->setFixed(false);
+                optimizer.addVertex(vPoint);
+                graph.AddVertex(nMPid);
+                vpMapPoints.push_back(pMP);
+                count++;
+            }
+        }
+    }
+
+    std::cout << "Map points: " << count << std::endl;
+
+    int edgeId = 0;
+    for(auto it=dt->finite_edges_begin(); it!=dt->finite_edges_end(); it++)
+    {
+        unsigned long nFMpId = it->first->vertex(it->second)->info();
+        unsigned long nSMpId = it->first->vertex(it->third)->info();
+
+        vnVerticesId[edgeId] = make_pair(nFMpId, nSMpId);
+
+        bool bFoundEdge = false;
+
+        // Observation in last frame
+        int nLfIdx = pLastFrame->mhMapPointsIDIdx[nFMpId];
+        int nLsIdx = pLastFrame->mhMapPointsIDIdx[nSMpId];
+        double dLfk = pLastFrame->mvDepth[nLfIdx];
+        double dLsk = pLastFrame->mvDepth[nLsIdx];
+        if(dLfk>0 && dLsk>0)
+        {
+            bFoundEdge = true;
+            const cv::KeyPoint &kpLf = pLastFrame->mvKeysUn[nLfIdx];
+            const cv::KeyPoint &kpLs = pLastFrame->mvKeysUn[nLsIdx];
+            
+            Eigen::Matrix3d covLf = CalculateCovarianceOfDepthMeasurement(kpLf.pt.x, kpLf.pt.y, imLfDepth, pLastFrame->fx, pLastFrame->fy, pLastFrame->cx, pLastFrame->cy);
+            Eigen::Matrix3d covLs = CalculateCovarianceOfDepthMeasurement(kpLs.pt.x, kpLs.pt.y, imLfDepth, pLastFrame->fx, pLastFrame->fy, pLastFrame->cx, pLastFrame->cy);
+            
+            if(covLf(2, 2) < 0.03 && covLs(2, 2) < 0.03)
+            {
+                EdgePointCorrelation* eLfPc = new EdgePointCorrelation();
+                // eLfPc->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
+                eLfPc->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nFMpId)));
+                eLfPc->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nSMpId)));
+                eLfPc->setTcw(Tlw);
+                Eigen::Matrix3d covLfs = covLf + covLs;
+                Eigen::Vector3d yLfk((kpLf.pt.x-pLastFrame->cx)*dLfk/pLastFrame->fx, (kpLf.pt.y-pLastFrame->cy)*dLfk/pLastFrame->fy, dLfk);
+                Eigen::Vector3d yLsk((kpLs.pt.x-pLastFrame->cx)*dLsk/pLastFrame->fx, (kpLs.pt.y-pLastFrame->cy)*dLsk/pLastFrame->fy, dLsk);
+                eLfPc->setMeasurement(yLfk-yLsk);
+                eLfPc->setInformation(covLfs.inverse());
+                eLfPc->edgeId = edgeId;
+
+                // Debug
+                // Eigen::Vector3d M = (yCfk-yCsk);
+                // Eigen::Vector3d T = Rcp * (vFMp1->estimate() - vSMp1->estimate());
+                // Eigen::Vector3d diff = T - M;
+                // if(diff.norm()>0.3)
+                // {
+                //     int npFIdx = pLastFrame->mhMapPointsIDIdx[nFMpId];
+                //     int npSIdx = pLastFrame->mhMapPointsIDIdx[nSMpId];
+                //     const cv::KeyPoint &kpPF = pLastFrame->mvKeysUn[npFIdx];
+                //     const cv::KeyPoint &kpPS = pLastFrame->mvKeysUn[npSIdx];
+                //     double dPf = pLastFrame->mvDepth[npFIdx];
+                //     double dPs = pLastFrame->mvDepth[npSIdx];
+                //     std::cout << "P d: " << dPf << ", " << dPs << std::endl;
+                //     std::cout << "C d: " << dCfk << ", " << dCsk << std::endl;
+                //     std::cout << "P coord: (" << kpPF.pt.x << ", " << kpPF.pt.y << "), (" << kpPS.pt.x << ", " << kpPS.pt.y << ")" << std::endl;
+                //     std::cout << "C coord: (" << kpCf.pt.x << ", " << kpCf.pt.y << "), (" << kpCs.pt.x << ", " << kpCs.pt.y << ")" << std::endl;
+                //     std::cout << "T: " << T(0) << ", " << T(1) << ", " << T(2) << std::endl;
+                //     std::cout << "M: " << M(0) << ", " << M(1) << ", " << M(2) << std::endl;
+                // }
+
+                g2o::RobustKernelHuber* rkc = new g2o::RobustKernelHuber;
+                eLfPc->setRobustKernel(rkc);
+                rkc->setDelta(deltaPointCorreltation);
+
+                optimizer.addEdge(eLfPc);
+                vpEdgesPointCorrelation.push_back(eLfPc);
+                ++measurementsOfEdge[edgeId];
+            }
+        }
+
+        // Observation in current frame
+        int nCfIdx = pCurrentFrame->mhMapPointsIDIdx[nFMpId];
+        int nCsIdx = pCurrentFrame->mhMapPointsIDIdx[nSMpId];
+        double dCfk = pCurrentFrame->mvDepth[nCfIdx];
+        double dCsk = pCurrentFrame->mvDepth[nCsIdx];
+        if(dCfk>0 && dCsk>0)
+        {
+            bFoundEdge = true;
+            const cv::KeyPoint &kpCf = pCurrentFrame->mvKeysUn[nCfIdx];
+            const cv::KeyPoint &kpCs = pCurrentFrame->mvKeysUn[nCsIdx];
+            
+            Eigen::Matrix3d covCf = CalculateCovarianceOfDepthMeasurement(kpCf.pt.x, kpCf.pt.y, imCfDepth, pCurrentFrame->fx, pCurrentFrame->fy, pCurrentFrame->cx, pCurrentFrame->cy);
+            Eigen::Matrix3d covCs = CalculateCovarianceOfDepthMeasurement(kpCs.pt.x, kpCs.pt.y, imCfDepth, pCurrentFrame->fx, pCurrentFrame->fy, pCurrentFrame->cx, pCurrentFrame->cy);
+
+            if(covCf(2, 2) < 0.03 && covCs(2, 2) < 0.03)
+            {
+                EdgePointCorrelation* eCfPc = new EdgePointCorrelation();
+            
+                // eCfPc->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(1)));
+                eCfPc->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nFMpId)));
+                eCfPc->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nSMpId)));
+                eCfPc->setTcw(Tcw);
+                Eigen::Matrix3d covCfs = covCf + covCs;
+                Eigen::Vector3d yCfk((kpCf.pt.x-pCurrentFrame->cx)*dCfk/pCurrentFrame->fx, (kpCf.pt.y-pCurrentFrame->cy)*dCfk/pCurrentFrame->fy, dCfk);
+                Eigen::Vector3d yCsk((kpCs.pt.x-pCurrentFrame->cx)*dCsk/pCurrentFrame->fx, (kpCs.pt.y-pCurrentFrame->cy)*dCsk/pCurrentFrame->fy, dCsk);
+                eCfPc->setMeasurement(yCfk-yCsk);
+                eCfPc->setInformation(covCfs.inverse());
+                eCfPc->edgeId = edgeId;
+
+                // Debug
+                // Eigen::Vector3d M = (yCfk-yCsk);
+                // Eigen::Vector3d T = Rcp * (vFMp1->estimate() - vSMp1->estimate());
+                // Eigen::Vector3d diff = T - M;
+                // if(diff.norm()>0.3)
+                // {
+                //     int npFIdx = pLastFrame->mhMapPointsIDIdx[nFMpId];
+                //     int npSIdx = pLastFrame->mhMapPointsIDIdx[nSMpId];
+                //     const cv::KeyPoint &kpPF = pLastFrame->mvKeysUn[npFIdx];
+                //     const cv::KeyPoint &kpPS = pLastFrame->mvKeysUn[npSIdx];
+                //     double dPf = pLastFrame->mvDepth[npFIdx];
+                //     double dPs = pLastFrame->mvDepth[npSIdx];
+                //     std::cout << "P d: " << dPf << ", " << dPs << std::endl;
+                //     std::cout << "C d: " << dCfk << ", " << dCsk << std::endl;
+                //     std::cout << "P coord: (" << kpPF.pt.x << ", " << kpPF.pt.y << "), (" << kpPS.pt.x << ", " << kpPS.pt.y << ")" << std::endl;
+                //     std::cout << "C coord: (" << kpCf.pt.x << ", " << kpCf.pt.y << "), (" << kpCs.pt.x << ", " << kpCs.pt.y << ")" << std::endl;
+                //     std::cout << "T: " << T(0) << ", " << T(1) << ", " << T(2) << std::endl;
+                //     std::cout << "M: " << M(0) << ", " << M(1) << ", " << M(2) << std::endl;
+                // }
+
+                g2o::RobustKernelHuber* rkc = new g2o::RobustKernelHuber;
+                eCfPc->setRobustKernel(rkc);
+                rkc->setDelta(deltaPointCorreltation);
+
+                optimizer.addEdge(eCfPc);
+                vpEdgesPointCorrelation.push_back(eCfPc);
+                ++measurementsOfEdge[edgeId];       
+            }
+        }
+        
+        // Add new edge to graph
+        if(bFoundEdge) 
+        {
+            graph.AddEdge(nFMpId, nSMpId);
+        }
+            
+        
+        ++edgeId;
+    }
+
+    graph.RemoveIsolatedVertices();
+
+    if(optimizer.edges().empty())
+        return;
+
+    // TODO Determine th value
+    const double th = 7.816;
+
+    size_t nEdges = vpEdgesPointCorrelation.size();
+    bool* zInliers = new bool[nEdges];
+    std::fill(zInliers, zInliers+nEdges, true);
+
+    for(int i=0; i<5; i++)
+    {
+        optimizer.initializeOptimization(0);
+        optimizer.optimize(1);
+
+        // g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(1));
+        // g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();
+        // std::cout << "Pose:\n" << SE3quat_recov.to_homogeneous_matrix() << std::endl;
+
+        for(size_t j=0, jend=vpEdgesPointCorrelation.size(); j<jend; j++)
+        {
+            EdgePointCorrelation* e = vpEdgesPointCorrelation[j];
+
+            if(!zInliers[j])
+                e->computeError();
+
+            const double chi2 = e->chi2();
+
+            if(chi2>th)
+            {
+                if(zInliers[j])
+                {
+                    zInliers[j] = false;
+                    e->setLevel(1);
+                    --measurementsOfEdge[e->edgeId];
+                }
+            }
+            else
+            {
+                if(!zInliers[j])
+                {
+                    zInliers[j] = true;
+                    e->setLevel(0);
+                    ++measurementsOfEdge[e->edgeId];
+                }
+            }
+        }
+    }
+
+    // Remove inconsistent edges
+    for(size_t i=0, iend=measurementsOfEdge.size(); i<iend; i++)
+    {
+        if(measurementsOfEdge[i] == 0)
+        {
+            unsigned long nSrcVertexId = vnVerticesId[i].first;
+            unsigned long nDestVertexId = vnVerticesId[i].second;
+            graph.RemoveEdge(nSrcVertexId, nDestVertexId);
+        }
+    }
+
+
+    // Find max connected componenet
+    vector<vector<Vertex>> vertexArray;
+    vector<vector<Edge>> edgeArray;
+    graph.GetConnections(vertexArray, edgeArray);
+
+    std::cout << "Vertex array: " << vertexArray.size() << ", edge array: " << edgeArray.size() << std::endl;
+
+    size_t maxConnectivity = 0;
+    int maxIdx = 0;
+
+    for(int i=0; i<static_cast<int>(vertexArray.size()); i++)
+    {
+        if(maxConnectivity<vertexArray[i].size())
+        {
+            maxConnectivity = vertexArray[i].size();
+            maxIdx = i;
+        }
+    }
+
+    std::cout << "Max connectivity: " << maxConnectivity << std::endl;
+
+    // Unmark map points that are not in largest connected component
+    int removed = 0;
+    for(size_t j=0; j<vertexArray.size(); j++)
+    {
+        if(j==maxIdx) continue;
+        for(const Vertex& v : vertexArray[j])
+        {
+            MapPoint* pMP = pCurrentFrame->mvpMapPoints[pCurrentFrame->mhMapPointsIDIdx[v.mnId]];
+            if(pMP)
+            {
+                pMP->SetUnmarked();
+                removed++;
+            }
+        }
+    }
+
+    std::cout << "Removed: " << removed << std::endl;
+
+    // Update
+    // std::cout << "Before update:\n" << pCurrentFrame->GetPose().matrix() << std::endl;
+    // g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(1));
+    // g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();
+    // Sophus::SE3<float> pose(SE3quat_recov.rotation().cast<float>(),
+    //         SE3quat_recov.translation().cast<float>());
+    // pCurrentFrame->SetPose(pose);
+    // std::cout << "After update:\n" << pCurrentFrame->GetPose().matrix() << std::endl;
+    
+    for(const Edge& edge : edgeArray[maxIdx])
+    {
+        pCurrentFrame->SetEdge(edge.mnSrcVId, edge.mnDestVId);
+    }
+
+    delete[] zInliers;
+}
+
+void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map* pMap, int iterations, double th, std::list<MapPoint*>& lpUnmarkedMapPoints)
+{
+    auto start = std::chrono::system_clock::now();
+    // Local KeyFrames: First Breath Search from Current Keyframe
+    list<KeyFrame*> lLocalKeyFrames;
+
+    lLocalKeyFrames.push_back(pKF);
+    pKF->mnBASPDForKF = pKF->mnId;
+    Map* pCurrentMap = pKF->GetMap();
+
+    const vector<KeyFrame*> vNeighKFs = pKF->GetVectorCovisibleKeyFrames();
+    for(int i=0, iend=vNeighKFs.size(); i<iend; i++)
+    {
+        KeyFrame* pKFi = vNeighKFs[i];
+        pKFi->mnBASPDForKF = pKF->mnId;
+        if(!pKFi->isBad() && pKFi->GetMap() == pCurrentMap)
+            lLocalKeyFrames.push_back(pKFi);
+    }
+
+    // Local MapPoints seen in Local KeyFrames
+    list<MapPoint*> lLocalMapPoints;
+    unordered_map<int, MapPoint*> hLocalMapPoints;
+    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin() , lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+
+        vector<MapPoint*> vpMPs = pKFi->GetMapPointMatches();
+        for(vector<MapPoint*>::iterator vit=vpMPs.begin(), vend=vpMPs.end(); vit!=vend; vit++)
+        {
+            MapPoint* pMP = *vit;
+            if(pMP)
+            {
+                if(!pMP->isBad() && pMP->isMarked() && pMP->GetMap() == pCurrentMap)
+                {
+                    if(pMP->mnBASPDForKF!=pKF->mnId)
+                    {
+                        lLocalMapPoints.push_back(pMP);
+                        hLocalMapPoints.insert({pMP->mnId, pMP});
+                        pMP->mnBASPDForKF=pKF->mnId;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fixed Keyframes. Keyframes that see Local MapPoints but that are not Local Keyframes
+    list<KeyFrame*> lFixedCameras;
+    for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
+    {
+        map<KeyFrame*,tuple<int,int>> observations = (*lit)->GetObservations();
+        for(map<KeyFrame*,tuple<int,int>>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
+        {
+            KeyFrame* pKFi = mit->first;
+
+            if(pKFi->mnBASPDForKF!=pKF->mnId && pKFi->mnBASPDFixedForKF!=pKF->mnId )
+            {
+                pKFi->mnBASPDFixedForKF=pKF->mnId;
+                if(!pKFi->isBad() && pKFi->GetMap() == pCurrentMap)
+                    lFixedCameras.push_back(pKFi);
+            }
+        }
+    }
+
+    // Setup optimizer
+    g2o::SparseOptimizer optimizer;
+    g2o::BlockSolverX::LinearSolverType * linearSolver;
+
+    linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolverX::PoseMatrixType>();
+
+    g2o::BlockSolverX * solver_ptr = new g2o::BlockSolverX(linearSolver);
+
+    g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
+    optimizer.setAlgorithm(solver);
+    optimizer.setVerbose(true);
+
+    if(pbStopFlag)
+        optimizer.setForceStopFlag(pbStopFlag);
+
+    unsigned long maxKFid = 0;
+
+    // Set Local KeyFrame vertices
+    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        VertexSO3* vSO3 = new VertexSO3;
+        Sophus::SE3d Tcw = pKFi->GetPose().cast<double>();
+        vSO3->setEstimate(Sophus::SO3d(Tcw.rotationMatrix()).log());
+        vSO3->setId(pKFi->mnId);
+        vSO3->setFixed(false);
+        optimizer.addVertex(vSO3);
+        if(pKFi->mnId>maxKFid)
+            maxKFid = pKFi->mnId;
+    }
+
+    // Set Fixed KeyFrame vertices
+    for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        VertexSO3* vSO3 = new VertexSO3;
+        Sophus::SE3d Tcw = pKFi->GetPose().cast<double>();
+        vSO3->setEstimate(Sophus::SO3d(Tcw.rotationMatrix()).log());
+        vSO3->setId(pKFi->mnId);
+        vSO3->setFixed(true);
+        optimizer.addVertex(vSO3);
+        if(pKFi->mnId>maxKFid)
+            maxKFid = pKFi->mnId;
+    }
+
+    auto end1 = std::chrono::system_clock::now();
+    auto duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end1 - start);
+    std::cout << "Setting up verices took " << duration1.count() << " ms" << std::endl;
+
+    // Triangulation
+    Delaunay dt = GraphBuilder::BuildGraph(lLocalMapPoints);
+
+    auto end2 = std::chrono::system_clock::now();
+    auto duration2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - end1);
+    std::cout << "Building Delaunay took " << duration2.count() << " ms" << std::endl;
+
+    // Set MapPoint vertices
+    const int N = static_cast<int>(lLocalMapPoints.size());
+    const int edges = dt.number_of_finite_edges();
+    vector<EdgePosePointCorrelation*> vpEdgesPointCorrelation;
+    vpEdgesPointCorrelation.reserve(edges*2);
+    vector<int> measurementsOfEdge(edges, 0);
+
+    Graph graph;
+
+    const double deltaPointCorrelation = sqrt(7.816);
+
+    for(list<MapPoint*>::iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
+    {
+        MapPoint* pMP = *it;
+        const int nMPid = pMP->mnId;
+        g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
+        vPoint->setEstimate(pMP->GetWorldPos().cast<double>());
+        vPoint->setId(nMPid+maxKFid);
+        vPoint->setFixed(false);
+        optimizer.addVertex(vPoint);
+        graph.AddVertex(nMPid);
+        // EdgePriorPoint* ePriorPoint = new EdgePriorPoint;
+        // ePriorPoint->setVertex(0, vPoint);
+        // ePriorPoint->setMeasurement(vPoint->estimate());
+        // ePriorPoint->setInformation(Eigen::Matrix3d::Identity()*1e3);
+        // optimizer.addEdge(ePriorPoint);
+    }
+
+    int edgeId = 0;
+    for(auto it=dt.finite_edges_begin(); it!=dt.finite_edges_end(); it++)
+    {
+        unsigned long nFMpId = it->first->vertex(it->second)->info();
+        unsigned long nSMpId = it->first->vertex(it->third)->info();
+
+        MapPoint* pFMP = hLocalMapPoints[nFMpId];
+        MapPoint* pSMP = hLocalMapPoints[nSMpId];
+
+        map<KeyFrame*, tuple<int, int>> FMPobservations = pFMP->GetObservations();
+        map<KeyFrame*, tuple<int, int>> SMPobservations = pSMP->GetObservations();
+
+        bool bFoundEdge = false;
+
+        // for(map<KeyFrame*, tuple<int, int>>::const_iterator mfit=FMPobservations.begin(), mfend=FMPobservations.end(); mfit!=mfend; mfit++)
+        // {
+        //     KeyFrame* pKFi = mfit->first;
+
+        //     // No common observation in KeyFrame
+        //     map<KeyFrame*, tuple<int, int>>::iterator msit = SMPobservations.find(pKFi);
+        //     if(msit==SMPobservations.end()) continue;
+
+        //     if(!pKFi->isBad() && pKFi->GetMap() == pCurrentMap)
+        //     {
+        //         const int nFIdx = get<0>(mfit->second);
+        //         const int nSIdx = get<0>(msit->second);
+        //         double dFk = pKF->mvDepth[nFIdx];
+        //         double dSk = pKF->mvDepth[nSIdx];
+        //         if(dFk>0 && dSk>0)
+        //         {
+        //             EdgePointCorrelation* e = new EdgePointCorrelation();
+        //             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nFMpId)));
+        //             e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nSMpId)));
+        //             const cv::KeyPoint &kpF = pKF->mvKeysUn[nFIdx];
+        //             const cv::KeyPoint &kpS = pKF->mvKeysUn[nSIdx];
+        //             e->setTcw(pKF->GetPose());
+        //             cv::Mat depthMat;
+        //             pKF->GetDepthMatRef(depthMat);
+        //             Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+        //             Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+        //             Eigen::Matrix3d covFS = covF + covS;
+        //             Eigen::Vector3d yFk((kpF.pt.x-pKF->cx)*dFk/pKF->fx, (kpF.pt.y-pKF->cy)*dFk/pKF->fy, dFk);
+        //             Eigen::Vector3d ySk((kpS.pt.x-pKF->cx)*dSk/pKF->fx, (kpS.pt.y-pKF->cy)*dSk/pKF->fy, dSk);
+        //             e->setMeasurement(yFk-ySk);
+        //             e->setInformation(covFS.inverse());
+        //             e->edgeId = edgeId;
+
+        //             g2o::RobustKernel* rkl = new g2o::RobustKernelHuber;
+        //             e->setRobustKernel(rkl);
+        //             rkl->setDelta(deltaPointCorrelation);
+
+        //             optimizer.addEdge(e);
+        //             vpEdgesPointCorrelation.push_back(e);
+        //             measurementsOfEdge[edgeId]++;
+        //         }
+        //     }
+        // }
+        
+        for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+        {
+            if(!FMPobservations.count(*lit) || !SMPobservations.count(*lit)) 
+                continue;
+
+            tuple<int, int> FMPindices = FMPobservations[*lit];
+            tuple<int, int> SMPindices = SMPobservations[*lit];
+
+            KeyFrame* pKF = *lit;
+            unsigned long KFid = pKF->mnId;
+            int nFIdx = get<0>(FMPindices);
+            int nSIdx = get<0>(SMPindices);
+            double dFk = pKF->mvDepth[nFIdx];
+            double dSk = pKF->mvDepth[nSIdx];
+            if(dFk>0 && dSk>0)
+            {
+                const cv::KeyPoint &kpF = pKF->mvKeysUn[nFIdx];
+                const cv::KeyPoint &kpS = pKF->mvKeysUn[nSIdx];
+                // e->setTcw(pKF->GetPose());
+                cv::Mat depthMat;
+                pKF->GetDepthMatRef(depthMat);
+                Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+                Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+                if(covF(2, 2) < 0.05 && covS(2, 2) < 0.05)
+                {
+                    bFoundEdge = true;
+                    EdgePosePointCorrelation* e = new EdgePosePointCorrelation();
+                    e->setVertex(0, dynamic_cast<VertexSO3*>(optimizer.vertex(KFid)));
+                    e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nFMpId+maxKFid)));
+                    e->setVertex(2, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nSMpId+maxKFid)));
+
+                    Eigen::Matrix3d covFS = covF + covS;
+                    Eigen::Vector3d yFk((kpF.pt.x-pKF->cx)*dFk/pKF->fx, (kpF.pt.y-pKF->cy)*dFk/pKF->fy, dFk);
+                    Eigen::Vector3d ySk((kpS.pt.x-pKF->cx)*dSk/pKF->fx, (kpS.pt.y-pKF->cy)*dSk/pKF->fy, dSk);
+                    e->setMeasurement(yFk-ySk);
+                    e->setInformation(covFS.inverse());
+                    e->edgeId = edgeId;
+
+                    g2o::RobustKernel* rkl = new g2o::RobustKernelHuber;
+                    e->setRobustKernel(rkl);
+                    rkl->setDelta(deltaPointCorrelation);
+
+                    optimizer.addEdge(e);
+                    vpEdgesPointCorrelation.push_back(e);
+                    ++measurementsOfEdge[edgeId];
+                }
+            }
+        }
+        for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
+        {
+            if(!FMPobservations.count(*lit) || !SMPobservations.count(*lit)) continue;
+            
+            tuple<int, int> FMPindices = FMPobservations[*lit];
+            tuple<int, int> SMPindices = SMPobservations[*lit];
+
+            KeyFrame* pKF = *lit;
+            unsigned long KFid = pKF->mnId;
+            int nFIdx = get<0>(FMPindices);
+            int nSIdx = get<0>(SMPindices);
+            double dFk = pKF->mvDepth[nFIdx];
+            double dSk = pKF->mvDepth[nSIdx];
+            if(dFk>0 && dSk>0)
+            {
+                const cv::KeyPoint &kpF = pKF->mvKeysUn[nFIdx];
+                const cv::KeyPoint &kpS = pKF->mvKeysUn[nSIdx];
+                // e->setTcw(pKF->GetPose());
+                cv::Mat depthMat;
+                pKF->GetDepthMatRef(depthMat);
+                Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+                Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
+                if (covF(2, 2) < 0.05 || covS(2, 2) < 0.05)
+                {
+                    bFoundEdge = true;
+                    EdgePosePointCorrelation* e = new EdgePosePointCorrelation();
+                    e->setVertex(0, dynamic_cast<VertexSO3*>(optimizer.vertex(KFid)));
+                    e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nFMpId+maxKFid)));
+                    e->setVertex(2, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nSMpId+maxKFid)));
+                    Eigen::Matrix3d covFS = covF + covS;
+                    Eigen::Vector3d yFk((kpF.pt.x-pKF->cx)*dFk/pKF->fx, (kpF.pt.y-pKF->cy)*dFk/pKF->fy, dFk);
+                    Eigen::Vector3d ySk((kpS.pt.x-pKF->cx)*dSk/pKF->fx, (kpS.pt.y-pKF->cy)*dSk/pKF->fy, dSk);
+                    e->setMeasurement(yFk-ySk);
+                    e->setInformation(covFS.inverse());
+                    e->edgeId = edgeId;
+
+                    g2o::RobustKernel* rkl = new g2o::RobustKernelHuber;
+                    e->setRobustKernel(rkl);
+                    rkl->setDelta(deltaPointCorrelation);
+
+                    optimizer.addEdge(e);
+                    vpEdgesPointCorrelation.push_back(e);
+                    ++measurementsOfEdge[edgeId];
+                }
+            }
+        }
+        // Add new edge to graph
+        if(bFoundEdge)
+            graph.AddEdge(nFMpId, nSMpId);
+        ++edgeId;
+    }
+
+    graph.RemoveIsolatedVertices();
+
+    auto end3 = std::chrono::system_clock::now();
+    auto duration3 = std::chrono::duration_cast<std::chrono::milliseconds>(end3 - end2);
+    std::cout << "Finding matches took " << duration3.count() << " ms" << std::endl;
+
+    size_t nOptimEdges = vpEdgesPointCorrelation.size();
+    bool* zInliers = new bool[nOptimEdges];
+    std::fill(zInliers, zInliers+nOptimEdges, true);
+
+    int en = optimizer.edges().size();
+    int vn = optimizer.vertices().size();
+    std::cout << "Local SPD: OPTIM edges: " << nOptimEdges << ", vertices: " << vn << ", Kfs: " << (lLocalKeyFrames.size() + lFixedCameras.size()) << std::endl;
+    
+    // int nRound = iterations / 5;
+    // int nOptimizationTimes = iterations/ nRound;
+    for(int iteration=0; iteration<10; ++iteration)
+    {
+        optimizer.initializeOptimization(0);
+        optimizer.optimize(1);
+
+        for(size_t i=0; i<nOptimEdges; i++)
+        {
+            EdgePosePointCorrelation* e = vpEdgesPointCorrelation[i];
+
+            if(i==2)
+                e->setRobustKernel(0);
+            
+            if(!zInliers[i])
+                e->computeError();
+
+            const double chi2 = e->chi2();
+
+            if(chi2>th)
+            {
+                if(zInliers[i])
+                {
+                    zInliers[i] = false;
+                    e->setLevel(1);
+                    --measurementsOfEdge[e->edgeId];
+                }
+            }
+            else
+            {
+                if(!zInliers[i])
+                {
+                    zInliers[i] = true;
+                    e->setLevel(0);
+                    ++measurementsOfEdge[e->edgeId];
+                }
+            }
+        }
+    }
+
+    // Remove inconsistent edges
+    for(size_t i=0; i<nOptimEdges; i++)
+    {
+        EdgePosePointCorrelation* e = vpEdgesPointCorrelation[i];
+        if(measurementsOfEdge[e->edgeId] == 0)
+        {
+            int nSrcVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(1))->id();
+            int nDestVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(2))->id();
+            graph.RemoveEdge(nSrcVertexId, nDestVertexId);
+        }
+    }
+    
+
+    auto end4 = std::chrono::system_clock::now();
+    auto duration4 = std::chrono::duration_cast<std::chrono::milliseconds>(end4 - end3);
+    std::cout << "Optimization took " << duration4.count() << " ms" << std::endl;
+
+    // Find max connected component
+    vector<vector<Vertex>> vertexArray;
+    vector<vector<Edge>> edgeArray;
+    graph.GetConnections(vertexArray, edgeArray);
+
+    auto end5 = std::chrono::system_clock::now();
+    auto duration5 = std::chrono::duration_cast<std::chrono::milliseconds>(end5 - end4);
+    std::cout << "Getting connections took " << duration5.count() << " ms" << std::endl;
+
+    size_t maxConnectivity = 0;
+    int maxIdx = 0;
+
+    for(int i=0; i<static_cast<int>(vertexArray.size()); i++)
+    {
+        if(maxConnectivity<vertexArray[i].size())
+        {
+            maxConnectivity = vertexArray[i].size();
+            maxIdx = i;
+        }
+    }
+
+    std::cout << "Max connectivity: " << maxConnectivity << std::endl;
+
+    // Unmark map points that are not in largest connected component
+    int outliers = 0;
+    for(size_t j=0; j<vertexArray.size(); j++)
+    {
+        if(j==maxIdx)
+        {
+            // // Update MapPoint
+            for(const Vertex& v : vertexArray[j])
+            {
+                g2o::VertexSBAPointXYZ* vPoint = static_cast<g2o::VertexSBAPointXYZ*>(optimizer.vertex(v.mnId+maxKFid));
+                MapPoint* pMP = hLocalMapPoints[v.mnId];
+                pMP->SetWorldPos(vPoint->estimate().cast<float>());
+            }
+            continue;
+        }
+        else
+        {
+            for(const Vertex& v : vertexArray[j])
+            {
+                MapPoint* pMP = hLocalMapPoints[v.mnId];
+                pMP->SetUnmarked();
+                lpUnmarkedMapPoints.push_back(pMP);
+                ++outliers;
+            }
+        }
+    }
+
+    std::cout << "Local SPD: Found " << outliers << " outliers" << std::endl;
+
+    delete[] zInliers;
+
+    auto end = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Local SPD took " << duration.count() << " ms" << std::endl;
 }
 
 } //namespace ORB_SLAM

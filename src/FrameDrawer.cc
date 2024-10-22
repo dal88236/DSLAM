@@ -41,6 +41,7 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
     vector<int> vMatches; // Initialization: correspondeces with reference keypoints
     vector<cv::KeyPoint> vCurrentKeys; // KeyPoints in current frame
     vector<bool> vbVO, vbMap; // Tracked MapPoints in current frame
+    vector<bool> vbMarked; // Marked MapPoints in current frame
     vector<pair<cv::Point2f, cv::Point2f> > vTracks;
     int state; // Tracking state
     vector<float> vCurrentDepth;
@@ -54,6 +55,8 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
     vector<MapPoint*> vpOutlierMPs;
     map<long unsigned int, cv::Point2f> mProjectPoints;
     map<long unsigned int, cv::Point2f> mMatchedInImage;
+
+    map<long unsigned int, vector<int>> mEdges;
 
     cv::Scalar standardColor(0,255,0);
     cv::Scalar odometryColor(255,0,0);
@@ -79,6 +82,7 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
             vCurrentKeys = mvCurrentKeys;
             vbVO = mvbVO;
             vbMap = mvbMap;
+            vbMarked = mvbMarked;
 
             currentFrame = mCurrentFrame;
             vpLocalMap = mvpLocalMap;
@@ -88,6 +92,9 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
             vpOutlierMPs = mvpOutlierMPs;
             mProjectPoints = mmProjectPoints;
             mMatchedInImage = mmMatchedInImage;
+
+            if(mbShowPointCorrelation)
+                mEdges = mmEdges;
 
             vCurrentDepth = mvCurrentDepth;
             thDepth = mThDepth;
@@ -181,8 +188,16 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
                 // This is a match to a MapPoint in the map
                 if(vbMap[i])
                 {
-                    cv::rectangle(im,pt1,pt2,standardColor);
-                    cv::circle(im,point,2,standardColor,-1);
+                    if(mbShowPointCorrelation)
+                    {
+                        DrawPointCorrelation(im,point,pt1,pt2,mEdges[i],vbMarked[i],vCurrentKeys,imageScale);
+                    }
+                    else
+                    {
+                        cv::rectangle(im,pt1,pt2,standardColor);
+                        cv::circle(im,point,2,standardColor,-1);
+                    }
+                    
                     mnTracked++;
                 }
                 else // This is match to a "visual odometry" MapPoint created in the last frame
@@ -193,6 +208,7 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
                 }
             }
         }
+
     }
 
     cv::Mat imWithInfo;
@@ -367,6 +383,29 @@ void FrameDrawer::DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText)
 
 }
 
+void FrameDrawer::DrawPointCorrelation(cv::Mat &im, cv::Point2f point, cv::Point2f pt1, cv::Point2f pt2, 
+                                       vector<int>& mEdges, bool marked, const vector<cv::KeyPoint> vCurrentKeys, float imageScale)
+{
+    cv::Scalar standardColor(0,255,0);
+    cv::Scalar unmarkedColor(255, 0, 255);
+
+    if(marked)
+    {
+        cv::rectangle(im,pt1,pt2,standardColor);
+        cv::circle(im,point,2,standardColor,-1);
+        for(vector<int>::iterator it=mEdges.begin(), iend=mEdges.end(); it<iend; it++)
+        {
+            cv::Point destPt = (imageScale == 1.f)? vCurrentKeys[*it].pt : vCurrentKeys[*it].pt / imageScale;
+            cv::line(im,point,destPt,standardColor,1);
+        }
+    }
+    else
+    {
+        cv::rectangle(im,pt1,pt2,unmarkedColor);
+        cv::circle(im,point,2,unmarkedColor,-1);
+    }
+}
+
 void FrameDrawer::Update(Tracking *pTracker)
 {
     unique_lock<mutex> lock(mMutex);
@@ -386,12 +425,16 @@ void FrameDrawer::Update(Tracking *pTracker)
 
     mvbVO = vector<bool>(N,false);
     mvbMap = vector<bool>(N,false);
+    mvbMarked = vector<bool>(N,false);
     mbOnlyTracking = pTracker->mbOnlyTracking;
 
     //Variables for the new visualization
     mCurrentFrame = pTracker->mCurrentFrame;
     mmProjectPoints = mCurrentFrame.mmProjectPoints;
     mmMatchedInImage.clear();
+
+    if(mbShowPointCorrelation)
+        mmEdges.clear();
 
     mvpLocalMap = pTracker->GetLocalMapMPS();
     mvMatchedKeys.clear();
@@ -428,6 +471,19 @@ void FrameDrawer::Update(Tracking *pTracker)
                 {
                     mvpOutlierMPs.push_back(pMP);
                     mvOutlierKeys.push_back(mvCurrentKeys[i]);
+                }
+
+                if(mbShowPointCorrelation)
+                {
+                    if(pMP->isMarked())
+                    {
+                        mvbMarked[i] = true;
+                        for(auto it=mCurrentFrame.mmEdges[pMP->mnId].begin(), iend=mCurrentFrame.mmEdges[pMP->mnId].end(); it<iend; it++)
+                        {
+                            int keyptIdx = mCurrentFrame.mhMapPointsIDIdx[*it];
+                            mmEdges[i].push_back(keyptIdx);
+                        }
+                    }
                 }
             }
         }

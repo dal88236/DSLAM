@@ -52,6 +52,7 @@ class LocalMapping;
 class LoopClosing;
 class System;
 class Settings;
+class StaticPointDetermination;
 
 class Tracking
 {  
@@ -80,6 +81,7 @@ public:
     void SetViewer(Viewer* pViewer);
     void SetStepByStep(bool bSet);
     bool GetStepByStep();
+    void SetStaticPointDeterminator(StaticPointDetermination* pStaticPointDeterminator);
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
@@ -139,6 +141,7 @@ public:
     Frame mLastFrame;
 
     cv::Mat mImGray;
+    cv::Mat mLastDepth, mCurrentDepth;
 
     // Initialization Variables (Monocular)
     std::vector<int> mvIniLastMatches;
@@ -257,6 +260,7 @@ protected:
     //Other Thread Pointers
     LocalMapping* mpLocalMapper;
     LoopClosing* mpLoopClosing;
+    StaticPointDetermination* mpStaticPointDeterminator;
 
     //ORB
     ORBextractor* mpORBextractorLeft, *mpORBextractorRight;

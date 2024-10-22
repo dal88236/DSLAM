@@ -6,8 +6,8 @@
                 "${workspaceFolder}/**",
                 "/usr/include/**",
                 "/usr/local/include/**",
-                "/opt/ros/galactic/include/**",
-                "/home/weiche/fmt/include/**"
+                // "/opt/ros/galactic/include/**",
+                // "/home/weiche/fmt/include/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

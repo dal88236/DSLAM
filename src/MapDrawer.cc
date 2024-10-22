@@ -437,11 +437,39 @@ void MapDrawer::DrawCurrentCamera(pangolin::OpenGlMatrix &Twc)
     glPopMatrix();
 }
 
+void MapDrawer::DrawPointCorrelation()
+{   
+    std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> vEdges;
+
+    {
+        unique_lock<mutex> lock(mMutexEdge);
+        vEdges = mvEdges;
+    }
+
+    glLineWidth(mGraphLineWidth);
+    glColor4f(0.0f,1.0f,0.0f,0.5f);
+    glBegin(GL_LINES);
+
+    // Draw static points links
+    for(size_t i=0; i<vEdges.size(); i++)
+    {
+        glVertex3f(vEdges[i].first(0),vEdges[i].first(1),vEdges[i].first(2));
+        glVertex3f(vEdges[i].second(0),vEdges[i].second(1),vEdges[i].second(2));
+    }
+
+    glEnd();
+}
 
 void MapDrawer::SetCurrentCameraPose(const Sophus::SE3f &Tcw)
 {
     unique_lock<mutex> lock(mMutexCamera);
     mCameraPose = Tcw.inverse();
+}
+
+void MapDrawer::SetPointCorrelationEdges(const std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>>& vEdges)
+{
+    unique_lock<mutex> lock(mMutexEdge);
+    mvEdges = vEdges;
 }
 
 void MapDrawer::GetCurrentOpenGLCameraMatrix(pangolin::OpenGlMatrix &M, pangolin::OpenGlMatrix &MOw)

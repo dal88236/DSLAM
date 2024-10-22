@@ -24,6 +24,7 @@
 #include "Thirdparty/g2o/g2o/types/types_sba.h"
 #include "Thirdparty/g2o/g2o/core/base_multi_edge.h"
 #include "Thirdparty/g2o/g2o/core/base_unary_edge.h"
+#include "Thirdparty/g2o/g2o/types/types_six_dof_expmap.h"
 
 #include<opencv2/core/core.hpp>
 
@@ -335,6 +336,27 @@ public:
 
     virtual void oplusImpl(const double* update_){
         _estimate.Update(update_);
+        updateCache();
+    }
+};
+
+class VertexSO3 : public g2o::BaseVertex<3, Eigen::Vector3d>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    VertexSO3(){}
+
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    virtual void setToOriginImpl() {
+        setEstimate(Eigen::Vector3d(0, 0, 0));
+    }
+
+    virtual void oplusImpl(const double* update_){
+        Eigen::Vector3d update(update_[0], update_[1], update_[2]);
+        // BCH
+        _estimate = (Sophus::SO3d::exp(update)*Sophus::SO3d::exp(_estimate)).log(); 
         updateCache();
     }
 };
@@ -842,16 +864,148 @@ public:
     Eigen::Vector3d dtij;
 };
 
-class EdgePointCorrelation : public g2o::BaseBinaryEdge<2, Eigen::Vector2d, g2o::VertexSBAPointXYZ, g2o::VertexSBAPointXYZ>
+class EdgePriorPoint : public g2o::BaseUnaryEdge<3, Eigen::Vector3d, g2o::VertexSBAPointXYZ>
 {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    EdgePointCorrelation(const Eigen::Vector3d& mapPointPos1, const Eigen::Vector3d& mapPointPos2) {
+    EdgePriorPoint() {}
 
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    void computeError(){
+        const g2o::VertexSBAPointXYZ* vPt = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[0]);
+        Eigen::Vector3d Pt = vPt->estimate();
+
+        _error = (_measurement - Pt);
     }
 
-    // Eigen:
+    void linearizeOplus(){
+        _jacobianOplusXi = -Eigen::Matrix3d::Identity();
+    }
+};
+
+class EdgePriorPose : public g2o::BaseUnaryEdge<6, g2o::SE3Quat, g2o::VertexSE3Expmap>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    EdgePriorPose() {}
+
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    void computeError(){
+        const g2o::VertexSE3Expmap* VSE3 = static_cast<const g2o::VertexSE3Expmap*>(_vertices[0]);
+        g2o::SE3Quat SE3 = VSE3->estimate();
+
+        _error = (_measurement.inverse()*SE3).log();
+    }
+
+    void linearizeOplus(){
+        const g2o::VertexSE3Expmap* VSE3 = static_cast<const g2o::VertexSE3Expmap*>(_vertices[0]);
+        g2o::SE3Quat SE3 = VSE3->estimate();
+
+        Eigen::Matrix3d R = SE3.rotation().toRotationMatrix();
+        Eigen::Matrix3d Rmeas = _measurement.rotation().toRotationMatrix();
+        Eigen::Matrix3d dR = Rmeas.transpose()*R;
+        _jacobianOplusXi.block<3, 3>(0, 0) = InverseRightJacobianSO3(Sophus::SO3d(dR).log());
+        _jacobianOplusXi.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
+    }
+};
+
+class EdgePointCorrelation : public g2o::BaseBinaryEdge<3, Eigen::Vector3d, g2o::VertexSBAPointXYZ, g2o::VertexSBAPointXYZ>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    EdgePointCorrelation(){
+    
+    }
+
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    void computeError(){
+        const g2o::VertexSBAPointXYZ* VPi = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[0]);
+        const g2o::VertexSBAPointXYZ* VPj = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[1]);
+        Eigen::Vector3d Pic = VPi->estimate();
+        Eigen::Vector3d Pjc = VPj->estimate();
+        
+        _error = _measurement-Rcw*(Pic-Pjc);
+    }
+
+    void linearizeOplus(){
+        _jacobianOplusXi = -Rcw;
+        _jacobianOplusXj = Rcw;
+    }
+
+    void setTcw(Sophus::SE3f Tcw) {
+        Rcw = Tcw.rotationMatrix().cast<double>();
+        // tcw = Tcw.translation().cast<double>();
+    }
+
+    void setTcw(Sophus::SE3d Tcw) {
+        Rcw = Tcw.rotationMatrix();
+        // tcw = Tcw.translation();
+    }
+
+    Eigen::Matrix3d Rcw;
+    // Eigen::Vector3d tcw;
+    int edgeId;
+}; // class EdgePointCorrelation
+
+class EdgePosePointCorrelation : public g2o::BaseMultiEdge<3, Eigen::Vector3d>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    EdgePosePointCorrelation(){
+        resize(3);
+    }
+
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    void computeError(){
+        const VertexSO3* VSO3 = static_cast<const VertexSO3*>(_vertices[0]);
+        const g2o::VertexSBAPointXYZ* VPi = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[1]);
+        const g2o::VertexSBAPointXYZ* VPj = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[2]);
+        Eigen::Matrix3d Rcw = Sophus::SO3d::exp(VSO3->estimate().matrix()).matrix();
+        Eigen::Vector3d Pic = VPi->estimate();
+        Eigen::Vector3d Pjc = VPj->estimate();
+        Eigen::Vector3d diffP = Rcw*(Pic-Pjc);
+
+        _error = _measurement-diffP;
+    }
+
+    void showMeasurement(){
+        // for debug
+        std::cout << "Meas: " << _measurement[0] << ", " << _measurement[1] << ", " << _measurement[2] << std::endl;
+    }
+
+    void linearizeOplus(){
+        const VertexSO3* VSO3 = static_cast<const VertexSO3*>(_vertices[0]);
+        const g2o::VertexSBAPointXYZ* VPi = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[1]);
+        const g2o::VertexSBAPointXYZ* VPj = static_cast<const g2o::VertexSBAPointXYZ*>(_vertices[2]);
+        Eigen::Matrix3d Rcw = Sophus::SO3d::exp(VSO3->estimate().matrix()).matrix();
+        Eigen::Vector3d Pic = VPi->estimate();
+        Eigen::Vector3d Pjc = VPj->estimate();
+        Eigen::Vector3d diffP = Rcw*(Pic-Pjc);
+        double x = diffP(0);
+        double y = diffP(1);
+        double z = diffP(2);
+
+        _jacobianOplus[0] << 0, -z, y,
+                             z, 0.0, -x,
+                             -y, x, 0.0;
+        _jacobianOplus[1] = -Rcw;
+        _jacobianOplus[2] = Rcw;
+    }
+
+
+    int edgeId;
 }; // class EdgePointCorrelation
 
 } //namespace ORB_SLAM2

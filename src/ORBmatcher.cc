@@ -257,7 +257,7 @@ namespace ORB_SLAM3
                     if(!pMP)
                         continue;
 
-                    if(pMP->isBad())
+                    if(pMP->isBad() || !pMP->isMarked())
                         continue;
 
                     const cv::Mat &dKF= pKF->mDescriptors.row(realIdxKF);
@@ -1697,6 +1697,9 @@ namespace ORB_SLAM3
             MapPoint* pMP = LastFrame.mvpMapPoints[i];
             if(pMP)
             {
+                // if(!pMP->isMarked())
+                //     continue;
+                    
                 if(!LastFrame.mvbOutlier[i])
                 {
                     // Project
@@ -1771,6 +1774,7 @@ namespace ORB_SLAM3
                     {
                         CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
                         nmatches++;
+                        CurrentFrame.mhMapPointsIDIdx[pMP->mnId] = bestIdx2;
 
                         if(mbCheckOrientation)
                         {
@@ -1876,8 +1880,10 @@ namespace ORB_SLAM3
                 {
                     for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
                     {
+                        int unmatchedMapPointId = CurrentFrame.mvpMapPoints[rotHist[i][j]]->mnId;
                         CurrentFrame.mvpMapPoints[rotHist[i][j]]=static_cast<MapPoint*>(NULL);
                         nmatches--;
+                        CurrentFrame.mhMapPointsIDIdx.erase(unmatchedMapPointId);
                     }
                 }
             }

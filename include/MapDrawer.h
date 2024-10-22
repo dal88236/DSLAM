@@ -27,6 +27,7 @@
 #include<pangolin/pangolin.h>
 
 #include<mutex>
+#include<utility>
 
 namespace ORB_SLAM3
 {
@@ -46,7 +47,9 @@ public:
     void DrawMapPoints();
     void DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const bool bDrawInertialGraph, const bool bDrawOptLba);
     void DrawCurrentCamera(pangolin::OpenGlMatrix &Twc);
+    void DrawPointCorrelation();
     void SetCurrentCameraPose(const Sophus::SE3f &Tcw);
+    void SetPointCorrelationEdges(const std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>>& vEdges);
     void SetReferenceKeyFrame(KeyFrame *pKF);
     void GetCurrentOpenGLCameraMatrix(pangolin::OpenGlMatrix &M, pangolin::OpenGlMatrix &MOw);
 
@@ -64,6 +67,7 @@ private:
     Sophus::SE3f mCameraPose;
 
     std::mutex mMutexCamera;
+    std::mutex mMutexEdge;
 
     float mfFrameColors[6][3] = {{0.0f, 0.0f, 1.0f},
                                 {0.8f, 0.4f, 1.0f},
@@ -72,6 +76,7 @@ private:
                                 {1.0f, 1.0f, 0.0f},
                                 {0.0f, 1.0f, 1.0f}};
 
+    std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> mvEdges;
 };
 
 } //namespace ORB_SLAM

@@ -208,6 +208,14 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     else
         mpLocalMapper->mbFarPoints = false;
 
+    //Initialize the Static Point Determination (backend) thread and launch
+    if(mSensor==RGBD)
+    {
+        mpStaticPointDeterminator = new StaticPointDetermination(mpAtlas);
+        mpStaticPointDeterminator->SetNumOfIterations(15);
+        mptStaticPointDetermination = new thread(&ORB_SLAM3::StaticPointDetermination::Run,mpStaticPointDeterminator);
+    }
+
     //Initialize the Loop Closing thread and launch
     // mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR
     mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC); // mSensor!=MONOCULAR);
@@ -216,6 +224,11 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     //Set pointers between threads
     mpTracker->SetLocalMapper(mpLocalMapper);
     mpTracker->SetLoopClosing(mpLoopCloser);
+
+    if(mSensor==RGBD)
+    {
+        mpTracker->SetStaticPointDeterminator(mpStaticPointDeterminator);
+    }
 
     mpLocalMapper->SetTracker(mpTracker);
     mpLocalMapper->SetLoopCloser(mpLoopCloser);
@@ -237,7 +250,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     }
 
     // Fix verbosity
-    Verbose::SetTh(Verbose::VERBOSITY_QUIET);
+    Verbose::SetTh(Verbose::VERBOSITY_DEBUG);
 
 }
 
@@ -363,6 +376,8 @@ Sophus::SE3f System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const
         {
             mpTracker->InformOnlyTracking(false);
             mpLocalMapper->Release();
+            if(mSensor==RGBD)
+                mpStaticPointDeterminator->Release();
             mbDeactivateLocalizationMode = false;
         }
     }
@@ -431,6 +446,16 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
                 usleep(1000);
             }
 
+            if(mSensor==RGBD)
+            {
+                mpStaticPointDeterminator->RequestStop();
+
+                while(!mpStaticPointDeterminator->isStopped())
+                {
+                    usleep(1000);
+                }
+            }
+
             mpTracker->InformOnlyTracking(true);
             mbActivateLocalizationMode = false;
         }
@@ -438,6 +463,8 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
         {
             mpTracker->InformOnlyTracking(false);
             mpLocalMapper->Release();
+            if(mSensor==RGBD)
+                mpStaticPointDeterminator->Release();
             mbDeactivateLocalizationMode = false;
         }
     }
@@ -523,6 +550,8 @@ void System::Shutdown()
 
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
+    if(mSensor==RGBD)
+        mpStaticPointDeterminator->RequestFinish();
     /*if(mpViewer)
     {
         mpViewer->RequestFinish();

@@ -19,28 +19,39 @@
 #ifndef GRAPHBUILDER_H
 #define GRAPHBUILDER_H
 
-#include "Frame.h"
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Delaunay_triangulation_3.h>
+#include <CGAL/Triangulation_vertex_base_with_info_3.h>
+#include <CGAL/Triangulation_cell_base_3.h>
+#include <CGAL/Triangulation_data_structure_3.h>
+#include <CGAL/Triangulation_hierarchy_vertex_base_3.h>
 
 #include <vector>
+#include <list>
 
 namespace ORB_SLAM3
 {
 
-struct Edge {
-    int map_point_id[2];
-}; // struct Edge
+typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 
-template <typename MesherT>
+typedef CGAL::Triangulation_vertex_base_with_info_3<unsigned long, K> Vb; // store id
+typedef CGAL::Triangulation_cell_base_3<K> Cb;
+typedef CGAL::Triangulation_data_structure_3<Vb, Cb> Tds;
+typedef CGAL::Delaunay_triangulation_3<K, Tds> Delaunay;
+typedef Delaunay::Point Point;
+
+class Frame;
+class MapPoint;
+
 class GraphBuilder
 {
 public:
     GraphBuilder();
 
     /// @brief Build a sparce graph based on tracked map points of the input frame
-    std::vector<Edge> BuildGraph();
-
-private:
-    MesherT mMesher;
+    static Delaunay BuildGraph(Frame &CurrentFrame, Frame &LastFrame);
+    
+    static Delaunay BuildGraph(const std::list<MapPoint*>& lLocalMapPoints);
 };
 
 } // namespace ORB_SLAM3

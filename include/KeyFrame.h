@@ -305,6 +305,10 @@ public:
 
     bool bImu;
 
+    void GetDepthMat(cv::Mat& depthMat);
+    void GetDepthMatRef(cv::Mat& depthMat);
+    void SetDepthMat(const cv::Mat& depthMat);
+
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
 public:
 
@@ -327,6 +331,10 @@ public:
     // Variables used by the local mapping
     long unsigned int mnBALocalForKF;
     long unsigned int mnBAFixedForKF;
+
+    // Varaible used by the static point determination
+    long unsigned int mnBASPDForKF;
+    long unsigned int mnBASPDFixedForKF;
 
     //Number of optimizations by BA(amount of iterations in BA)
     long unsigned int mnNumberOfOpt;
@@ -500,6 +508,9 @@ protected:
     std::mutex mMutexConnections;
     std::mutex mMutexFeatures;
     std::mutex mMutexMap;
+
+    // Depth mat for computation of measurement covariance
+    cv::Mat mDepthMat;
 
 public:
     GeometricCamera* mpCamera, *mpCamera2;

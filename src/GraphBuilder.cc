@@ -17,20 +17,62 @@
 */
 
 #include "GraphBuilder.h"
+#include "Frame.h"
+#include "System.h"
+
+#include <utility>
 
 namespace ORB_SLAM3
 {
-// TODO
+
 GraphBuilder::GraphBuilder() {}
 
-// TODO
-std::vector<Edge> GraphBuilder::BuildGraph() {}
-
-std::vector<Edge> GraphBuilder::DelaunaryTriangulation(const std::vector<MapPoint*>& trackedMapPoints) 
+Delaunay GraphBuilder::BuildGraph(Frame &CurrentFrame, Frame &LastFrame)
 {
-    std::vector<Edge> edges;
-    edges.reserve(3 * trackedMapPoints.size() - 3);
+    // examine
+    std::vector<std::pair<Point, unsigned long>> dtPointsInput;
+    for(int i=0; i<CurrentFrame.N; i++)
+    {
+        MapPoint* pMP = CurrentFrame.mvpMapPoints[i];
+        if(pMP)
+        {
+            if(pMP->isBad() || !pMP->isMarked()) continue;
 
-    return edges;
+            unsigned long nMPId = pMP->mnId;
+            if(!LastFrame.mhMapPointsIDIdx.count(nMPId)) continue;
+
+            Eigen::Vector3f x3Dw = pMP->GetWorldPos();
+            dtPointsInput.emplace_back(std::make_pair(Point(x3Dw.x(), x3Dw.y(), x3Dw.z()), nMPId));
+        }
+    }
+    Delaunay dt(dtPointsInput.begin(), dtPointsInput.end());
+    Verbose::PrintMess("Constructed a Delaunay graph with " + to_string(dt.number_of_vertices()) +
+     " vertices and " + to_string(dt.number_of_finite_edges()) + " edges", Verbose::VERBOSITY_DEBUG);
+
+    return dt;
 }
-} // namespace ORB_SLAM3
+
+Delaunay GraphBuilder::BuildGraph(const std::list<MapPoint*>& lLocalMapPoints)
+{
+    std::vector<std::pair<Point, unsigned long>> dtPointsInput;
+    for(std::list<MapPoint*>::const_iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
+    {
+        MapPoint* pMP = *it;
+        if(pMP)
+        {
+            if(pMP->isBad() || !pMP->isMarked()) continue;
+
+            unsigned long nMPId = pMP->mnId;
+
+            Eigen::Vector3f x3Dw = pMP->GetWorldPos();
+            dtPointsInput.emplace_back(std::make_pair(Point(x3Dw.x(), x3Dw.y(), x3Dw.z()), nMPId));
+        }
+    }
+    Delaunay dt(dtPointsInput.begin(), dtPointsInput.end());
+    Verbose::PrintMess("Local SPD: Constructed a graph with " + to_string(dt.number_of_vertices()) +
+     " vertices and " + to_string(dt.number_of_finite_edges()) + " edges", Verbose::VERBOSITY_DEBUG);
+
+    return dt;
+}
+
+} // namespace ORB_SLAM3 

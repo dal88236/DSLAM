@@ -188,6 +188,9 @@ public:
     long unsigned int mnBALocalForKF;
     long unsigned int mnFuseCandidateForKF;
 
+    // Variable used by static point determination
+    long unsigned int mnBASPDForKF;
+
     // Variables used by loop closing
     long unsigned int mnLoopPointForKF;
     long unsigned int mnCorrectedByKF;

@@ -93,7 +93,7 @@ private:
     std::mutex mMutexStop;
 
     bool mbStopTrack;
-
+    bool mbShowPointCorrelation;
 };
 
 }

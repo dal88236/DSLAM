@@ -51,16 +51,19 @@ public:
     cv::Mat DrawRightFrame(float imageScale=1.f);
 
     bool both;
+    bool mbShowPointCorrelation;
 
 protected:
 
     void DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText);
+    void DrawPointCorrelation(cv::Mat &im, cv::Point2f point, cv::Point2f pt1, cv::Point2f pt2, 
+                              vector<int>& mEdges, bool marked, const vector<cv::KeyPoint> vCurrentKeys, float imageScale=1.f);
 
     // Info of the frame to be drawn
     cv::Mat mIm, mImRight;
     int N;
     vector<cv::KeyPoint> mvCurrentKeys,mvCurrentKeysRight;
-    vector<bool> mvbMap, mvbVO;
+    vector<bool> mvbMap, mvbVO, mvbMarked;
     bool mbOnlyTracking;
     int mnTracked, mnTrackedVO;
     vector<cv::KeyPoint> mvIniKeys;
@@ -83,7 +86,7 @@ protected:
 
     map<long unsigned int, cv::Point2f> mmProjectPoints;
     map<long unsigned int, cv::Point2f> mmMatchedInImage;
-
+    map<long unsigned int, vector<int>> mmEdges; // mapPoint id, keypoint idx
 };
 
 } //namespace ORB_SLAM

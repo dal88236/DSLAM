@@ -28,6 +28,7 @@
 #include "KannalaBrandt8.h"
 #include "MLPnPsolver.h"
 #include "GeometricTools.h"
+#include "GraphBuilder.h"
 
 #include <iostream>
 
@@ -1434,6 +1435,11 @@ void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
     mpLoopClosing=pLoopClosing;
 }
 
+void Tracking::SetStaticPointDeterminator(StaticPointDetermination* pStaticPointDeterminator)
+{
+    mpStaticPointDeterminator=pStaticPointDeterminator;
+}
+
 void Tracking::SetViewer(Viewer *pViewer)
 {
     mpViewer=pViewer;
@@ -1541,7 +1547,11 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
 
     if (mSensor == System::RGBD)
+    {
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
+        mLastDepth = mCurrentDepth;
+        mCurrentDepth = imDepth;
+    }
     else if(mSensor == System::IMU_RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
 
@@ -1789,10 +1799,9 @@ void Tracking::DetermineStaticPoints()
 {
     // TODO
     // build graph based on tracked map points
-    for (int i=0; i<mCurrentFrame.N; i++)
-    {
-        MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
-    }
+    Delaunay dt = GraphBuilder::BuildGraph(mCurrentFrame, mLastFrame);
+    // if(dt.number_of_finite_edges()!=0)
+    //     Optimizer::PointGraphOptimization(&mCurrentFrame, &mLastFrame, mLastDepth, mCurrentDepth, &dt);
 }
 
 void Tracking::ResetFrameIMU()
@@ -1961,9 +1970,11 @@ void Tracking::Track()
                 {
                     Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
                     bOK = TrackWithMotionModel();
+
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
-                    else
+                    
+                    if(bOK && mSensor==System::RGBD)
                     {
                         Verbose::PrintMess("TRACK: Tracking succeed. Determine static points tracked", Verbose::VERBOSITY_DEBUG);
                         DetermineStaticPoints();
@@ -2215,7 +2226,32 @@ void Tracking::Track()
         // Update drawer
         mpFrameDrawer->Update(this);
         if(mCurrentFrame.isSet())
+        {
             mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
+
+            if (bOK && mSensor == System::RGBD)
+            {
+                vector<pair<Eigen::Vector3f, Eigen::Vector3f>> vEdges;
+                for(auto it=mCurrentFrame.mmEdges.begin(), iend=mCurrentFrame.mmEdges.end(); it!=iend; it++)
+                {
+                    int nFPIdx = mCurrentFrame.mhMapPointsIDIdx[it->first];
+                    MapPoint* pFMP = mCurrentFrame.mvpMapPoints[nFPIdx];
+                    if(pFMP)
+                    {
+                        for(unsigned long& nSPId : it->second)
+                        {
+                            int nSPIdx = mCurrentFrame.mhMapPointsIDIdx[nSPId];
+                            MapPoint* pSMP = mCurrentFrame.mvpMapPoints[nSPIdx];
+                            if(pSMP)
+                                vEdges.push_back(make_pair(pFMP->GetWorldPos(), pSMP->GetWorldPos()));
+                        }
+                    }
+                    
+                }
+                mpMapDrawer->SetPointCorrelationEdges(vEdges);
+            }
+        }
+            
 
         if(bOK || mState==RECENTLY_LOST)
         {
@@ -2344,6 +2380,7 @@ void Tracking::Track()
         }
     }
 #endif
+
 }
 
 
@@ -2387,6 +2424,9 @@ void Tracking::StereoInitialization()
         // Create KeyFrame
         KeyFrame* pKFini = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
 
+        if(mSensor==System::RGBD)
+            pKFini->SetDepthMat(mCurrentDepth);
+
         // Insert KeyFrame in the map
         mpAtlas->AddKeyFrame(pKFini);
 
@@ -2407,6 +2447,8 @@ void Tracking::StereoInitialization()
                     mpAtlas->AddMapPoint(pNewMP);
 
                     mCurrentFrame.mvpMapPoints[i]=pNewMP;
+                    unsigned long nId = pNewMP->mnId;
+                    mCurrentFrame.mhMapPointsIDIdx[nId] = i;
                 }
             }
         } else{
@@ -2438,6 +2480,9 @@ void Tracking::StereoInitialization()
         //cout << "Active map: " << mpAtlas->GetCurrentMap()->GetId() << endl;
 
         mpLocalMapper->InsertKeyFrame(pKFini);
+
+        if(mSensor==System::RGBD)
+            mpStaticPointDeterminator->InsertKeyFrame(pKFini);
 
         mLastFrame = Frame(mCurrentFrame);
         mnLastKeyFrameId = mCurrentFrame.mnId;
@@ -2751,6 +2796,18 @@ bool Tracking::TrackReferenceKeyFrame()
     }
 
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
+    if(mSensor == System::RGBD)
+    {
+        for(int i=0; i<static_cast<int>(mCurrentFrame.mvpMapPoints.size()); i++)
+        {
+            MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+            if(pMP)
+            {
+                unsigned long nMPId = pMP->mnId;
+                mCurrentFrame.mhMapPointsIDIdx[nMPId] = i;
+            }
+        }
+    }
     mCurrentFrame.SetPose(mLastFrame.GetPose());
 
     //mCurrentFrame.PrintPointDistribution();
@@ -3237,9 +3294,11 @@ void Tracking::CreateNewKeyFrame()
         return;
 
     KeyFrame* pKF = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
-
     if(mpAtlas->isImuInitialized()) //  || mpLocalMapper->IsInitializing())
         pKF->bImu = true;
+
+    if(mSensor==System::RGBD)
+        pKF->SetDepthMat(mCurrentDepth);
 
     pKF->SetNewBias(mCurrentFrame.mImuBias);
     mpReferenceKF = pKF;
@@ -3351,6 +3410,12 @@ void Tracking::CreateNewKeyFrame()
 
     mpLocalMapper->SetNotStop(false);
 
+    if(mSensor==System::RGBD)
+    {
+        mpStaticPointDeterminator->InsertKeyFrame(pKF);
+        mpStaticPointDeterminator->SetNotStop(false);
+    }
+
     mnLastKeyFrameId = mCurrentFrame.mnId;
     mpLastKeyFrame = pKF;
 }
@@ -3367,7 +3432,7 @@ void Tracking::SearchLocalPoints()
             {
                 *vit = static_cast<MapPoint*>(NULL);
             }
-            else
+            else if(pMP->isMarked())
             {
                 pMP->IncreaseVisible();
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
@@ -3458,7 +3523,7 @@ void Tracking::UpdateLocalPoints()
                 continue;
             if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)
                 continue;
-            if(!pMP->isBad())
+            if(!pMP->isBad() || !pMP->isMarked())
             {
                 count_pts++;
                 mvpLocalMapPoints.push_back(pMP);

@@ -33,7 +33,10 @@
 #include "Converter.h"
 #include "Settings.h"
 
+#include "GraphBuilder.h"
+
 #include <mutex>
+#include <unordered_map>
 #include <opencv2/opencv.hpp>
 
 #include "Eigen/Core"
@@ -49,6 +52,8 @@ class KeyFrame;
 class ConstraintPoseImu;
 class GeometricCamera;
 class ORBextractor;
+class Edge;
+class Vertex;
 
 class Frame
 {
@@ -162,7 +167,7 @@ public:
         return mbHasVelocity;
     }
 
-
+    void SetEdge(unsigned long srcId, unsigned long destId);
 
 private:
     //Sophus/Eigen migration
@@ -242,6 +247,7 @@ public:
     cv::Mat mDescriptors, mDescriptorsRight;
 
     // Hash map that stores map points ID and index for fast query
+    std::unordered_map<long unsigned int, int> mhMapPointsIDIdx; // TODO: add into copy constructor
 
     // MapPoints associated to keypoints, NULL pointer if no association.
     // Flag to identify outlier associations.
@@ -326,6 +332,9 @@ private:
 
 public:
     GeometricCamera* mpCamera, *mpCamera2;
+
+    // Graph for point correlation check 
+    std::map<unsigned long, std::vector<unsigned long>> mmEdges;
 
     //Number of KeyPoints extracted in the left and right images
     int Nleft, Nright;

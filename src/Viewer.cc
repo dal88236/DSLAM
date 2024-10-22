@@ -27,7 +27,7 @@ namespace ORB_SLAM3
 
 Viewer::Viewer(System* pSystem, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Tracking *pTracking, const string &strSettingPath, Settings* settings):
     both(false), mpSystem(pSystem), mpFrameDrawer(pFrameDrawer),mpMapDrawer(pMapDrawer), mpTracker(pTracking),
-    mbFinishRequested(false), mbFinished(true), mbStopped(true), mbStopRequested(false)
+    mbFinishRequested(false), mbFinished(true), mbStopped(true), mbStopRequested(false), mbShowPointCorrelation(false)
 {
     if(settings){
         newParameterLoader(settings);
@@ -156,6 +156,17 @@ bool Viewer::ParseViewerParamFile(cv::FileStorage &fSettings)
         b_miss_params = true;
     }
 
+    // node = fSettings["Viewer.ShowPointCorrelation"];
+    // if(!node.empty())
+    // {
+    //     mbShowPointCorrelation = node.real();
+    // }
+    // else
+    // {
+    //     std::cerr << "*Viewer.ShowPointCorrelation parameter doesn't exist or is not a real number*" << std::endl;
+    //     b_miss_params = true;
+    // }
+
     return !b_miss_params;
 }
 
@@ -214,6 +225,15 @@ void Viewer::Run()
     if(mpTracker->mSensor == mpSystem->MONOCULAR || mpTracker->mSensor == mpSystem->STEREO || mpTracker->mSensor == mpSystem->RGBD)
     {
         menuShowGraph = true;
+    }
+    if(mpTracker->mSensor == mpSystem->RGBD)
+    {
+        mbShowPointCorrelation = true;
+        mpFrameDrawer->mbShowPointCorrelation = true;
+    }
+    else
+    {
+        mbShowPointCorrelation = false;
     }
 
     float trackedImageScale = mpTracker->GetImageScale();
@@ -314,6 +334,9 @@ void Viewer::Run()
             mpMapDrawer->DrawKeyFrames(menuShowKeyFrames,menuShowGraph, menuShowInertialGraph, menuShowOptLba);
         if(menuShowPoints)
             mpMapDrawer->DrawMapPoints();
+
+        if(mbShowPointCorrelation) 
+            mpMapDrawer->DrawPointCorrelation();
 
         pangolin::FinishFrame();
 

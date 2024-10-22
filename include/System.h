@@ -39,6 +39,7 @@
 #include "Viewer.h"
 #include "ImuTypes.h"
 #include "Settings.h"
+#include "StaticPointDetermination.h"
 
 
 namespace ORB_SLAM3
@@ -220,6 +221,9 @@ private:
     // Local Mapper. It manages the local map and performs local bundle adjustment.
     LocalMapping* mpLocalMapper;
 
+    // Static Point Determination module. It determines if newly added map points is static or not.
+    StaticPointDetermination* mpStaticPointDeterminator; 
+    
     // Loop Closer. It searches loops with every new keyframe. If there is a loop it performs
     // a pose graph optimization and full bundle adjustment (in a new thread) afterwards.
     LoopClosing* mpLoopCloser;
@@ -235,6 +239,7 @@ private:
     std::thread* mptLocalMapping;
     std::thread* mptLoopClosing;
     std::thread* mptViewer;
+    std::thread* mptStaticPointDetermination;
 
     // Reset flag
     std::mutex mMutexReset;

@@ -71,6 +71,17 @@
         "valarray": "cpp",
         "variant": "cpp",
         "bit": "cpp",
-        "core": "cpp"
+        "core": "cpp",
+        "*.ipp": "cpp",
+        "matrixfunctions": "cpp",
+        "queue": "cpp"
+    },
+    "cmake.debugConfig": {
+        "args": [
+            "/home/weiche/Desktop/SLAM_resources/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+            "/home/weiche/Desktop/SLAM_resources/ORB_SLAM3/Examples/RGB-D/TUM1.yaml",
+            "/home/weiche/Desktop/SLAM_resources/ORB_SLAM3/",
+            "/home/weiche/Desktop/SLAM_resources/ORB_SLAM3/Examples/RGB-D/associations/fr1_desk.txt"
+        ]
     }
 }

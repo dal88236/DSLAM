@@ -41,7 +41,10 @@
 namespace ORB_SLAM3
 {
 
+typedef g2o::BlockSolver<g2o::BlockSolverTraits<3, 3> > BlockSolver_3_3; 
+
 class LoopClosing;
+
 
 class Optimizer
 {
@@ -97,6 +100,10 @@ public:
     void static InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &scale, Eigen::Vector3d &bg, Eigen::Vector3d &ba, bool bMono, Eigen::MatrixXd  &covInertial, bool bFixedVel=false, bool bGauss=false, float priorG = 1e2, float priorA = 1e6);
     void static InertialOptimization(Map *pMap, Eigen::Vector3d &bg, Eigen::Vector3d &ba, float priorG = 1e2, float priorA = 1e6);
     void static InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &scale);
+
+    // Static points segmentation
+    void static PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, cv::Mat& imLfDepth, cv::Mat& imCfDepth, Delaunay* dt);
+    void static LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map* pMap, int iterations, double th, std::list<MapPoint*>& lpUnmarkedMapPoints);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 };
