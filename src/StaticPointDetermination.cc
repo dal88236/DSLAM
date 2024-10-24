@@ -25,10 +25,10 @@
 namespace ORB_SLAM3
 {
 
-StaticPointDetermination::StaticPointDetermination(Atlas* pAtlas, size_t th):
+StaticPointDetermination::StaticPointDetermination(Atlas* pAtlas, size_t nQueueTh):
     mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas),
-    mbAbortOptimization(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mnNewKF(0), mnProcessedKF(0),
-    mbAcceptKeyFrames(true), mnQueueTh(th)
+    mbAbortOptimization(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mnLastProcessedKF(-1),
+    mbAcceptKeyFrames(true), mnQueueTh(nQueueTh)
 {
 
 }
@@ -41,25 +41,23 @@ void StaticPointDetermination::Run()
     {
         SetAcceptKeyFrames(false);
 
-        if(CheckNewKeyFrames())
+        if(!CheckAllKeyFramesProcessed())
         {
             ProcessNewKeyFrame();
-
-            // Remove unstable map points that cannot be observed in sliding window
-            MapPointCulling();
-
-            bool b_doneSPD = false;
+            bool bDoneSPD = false;
 
             mbAbortOptimization = false;
             
-            if(!CheckNewKeyFrames() && !stopRequested())
+            if(!stopRequested())
             {
                 if(mpAtlas->KeyFramesInMap()>2)
                 {
-                    std::cout << "Local SPD KFS: " << mpAtlas->KeyFramesInMap() << std::endl;
-                    Optimizer::LocalPointGraphOptimization(mpCurrentKeyFrame, &mbAbortOptimization, mpCurrentKeyFrame->GetMap(), mnIterations, 7.816, mlpUnmarkedMapPoints);
+                    KeyFrame* pFirstKF = mlNewKeyFrames.front();
+                    Map* pCurrentMap = pFirstKF->GetMap();
+                    Optimizer::LocalPointGraphOptimization(mlNewKeyFrames, &mbAbortOptimization, pCurrentMap, mnIterations, 3.5, mlpUnmarkedMapPoints);
                 }
-                b_doneSPD = true;
+                bDoneSPD = true;
+                mnLastProcessedKF = mlNewKeyFrames.back()->mnId;
             }
         }
 
@@ -74,9 +72,8 @@ void StaticPointDetermination::Run()
     SetFinish();
 }
 
-void StaticPointDetermination::MapPointCulling()
+void StaticPointDetermination::MapPointCulling(unsigned long nKFId)
 {
-    
     // Check Recent Added MapPoints
     list<MapPoint*>::iterator lit = mlpUnmarkedMapPoints.begin();
 
@@ -90,18 +87,7 @@ void StaticPointDetermination::MapPointCulling()
             lit = mlpUnmarkedMapPoints.erase(lit);
         else if(!pMP->isMarked())
         {
-            unique_lock<mutex> lock(mMutexNewKFs);
-            bool bInFOV = false;
-            std::map<KeyFrame*,std::tuple<int,int>> observation = pMP->GetObservations();
-            for(list<KeyFrame*>::iterator lit=mlKeyFramesInSW.begin(), lend=mlKeyFramesInSW.end(); lit!=lend; lit++)
-            {
-                if(observation.count(*lit))
-                {
-                    bInFOV = true;
-                    break;
-                }
-            }
-            if(!bInFOV)
+            if(pMP->mnLastSeenKF == nKFId)
             {
                 pMP->SetBadFlag();
                 lit = mlpUnmarkedMapPoints.erase(lit);
@@ -114,46 +100,62 @@ void StaticPointDetermination::MapPointCulling()
 
 void StaticPointDetermination::InsertKeyFrame(KeyFrame *pKF)
 {
+    if(!AcceptKeyFrames())
+        return;
     unique_lock<mutex> lock(mMutexNewKFs);
     mlNewKeyFrames.push_back(pKF);
-    mbAbortOptimization = true;
+
+    while(mlNewKeyFrames.size() > mnQueueTh)
+    {
+        KeyFrame* pKF = mlNewKeyFrames.front();
+        pKF->ClearDepthMat();
+        mlNewKeyFrames.pop_front();
+        MapPointCulling(pKF->mnId);
+    }
 }
 
-
-bool StaticPointDetermination::CheckNewKeyFrames()
+void StaticPointDetermination::RemoveKeyFrame(KeyFrame* pKF)
 {
     unique_lock<mutex> lock(mMutexNewKFs);
-    return (!mlNewKeyFrames.empty());
+    mlNewKeyFrames.remove(pKF);
 }
 
 bool StaticPointDetermination::CheckAllKeyFramesProcessed()
 {
     unique_lock<mutex> lock(mMutexNewKFs);
-    return mnNewKF==mnProcessedKF;
+    if(mlNewKeyFrames.empty())
+        return true;
+
+    return mnLastProcessedKF < 0? false : mlNewKeyFrames.back()->mnId<=mnLastProcessedKF;
 }
 
 void StaticPointDetermination::ProcessNewKeyFrame()
 {
+    unique_lock<mutex> lock(mMutexNewKFs);
+        
+    for(list<KeyFrame*>::iterator lit=mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
     {
-        unique_lock<mutex> lock(mMutexNewKFs);
-        mpCurrentKeyFrame = mlNewKeyFrames.front();
-        mlNewKeyFrames.pop_front();
-        mlKeyFramesInSW.push_back(mpCurrentKeyFrame);
+        KeyFrame* pKF = *lit;
 
-        if(mlKeyFramesInSW.size()>mnQueueTh)
-            mlKeyFramesInSW.pop_front();
-    }
-    const vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+        if(pKF->mnId <= mnLastProcessedKF)
+            continue;
 
-    for(size_t i=0; i<vpMapPointMatches.size(); i++)
-    {
-        MapPoint* pMP = vpMapPointMatches[i];
-        if(pMP)
+        vector<MapPoint*> vpMapPointMatches = pKF->GetMapPointMatches();
+        for(size_t i=0; i<vpMapPointMatches.size(); i++)
         {
-            if(!pMP->isMarked())
-                mlpUnmarkedMapPoints.push_back(pMP);
+            MapPoint* pMP = vpMapPointMatches[i];
+            if(pMP)
+            {
+                pMP->mnLastSeenKF = pKF->mnId;
+                if(!pMP->isMarked() && !pMP->mbProcessedBySPD) // Dynamic points detected in front end
+                {
+                    mlpUnmarkedMapPoints.push_back(pMP);
+                    pMP->mbProcessedBySPD = true;
+                }
+            }
         }
     }
+    
 }
 
 void StaticPointDetermination::RequestStop()
@@ -262,22 +264,6 @@ bool StaticPointDetermination::isFinished()
 {
     unique_lock<mutex> lock(mMutexFinish);
     return mbFinished;
-}
-
-double StaticPointDetermination::GetCurrKFTime()
-{
-
-    if (mpCurrentKeyFrame)
-    {
-        return mpCurrentKeyFrame->mTimeStamp;
-    }
-    else
-        return 0.0;
-}
-
-KeyFrame* StaticPointDetermination::GetCurrKF()
-{
-    return mpCurrentKeyFrame;
 }
 
 void StaticPointDetermination::ResetIfRequested()

@@ -212,7 +212,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     if(mSensor==RGBD)
     {
         mpStaticPointDeterminator = new StaticPointDetermination(mpAtlas);
-        mpStaticPointDeterminator->SetNumOfIterations(15);
+        mpStaticPointDeterminator->SetNumOfIterations(10);
         mptStaticPointDetermination = new thread(&ORB_SLAM3::StaticPointDetermination::Run,mpStaticPointDeterminator);
     }
 
@@ -225,16 +225,17 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     mpTracker->SetLocalMapper(mpLocalMapper);
     mpTracker->SetLoopClosing(mpLoopCloser);
 
-    if(mSensor==RGBD)
-    {
-        mpTracker->SetStaticPointDeterminator(mpStaticPointDeterminator);
-    }
-
     mpLocalMapper->SetTracker(mpTracker);
     mpLocalMapper->SetLoopCloser(mpLoopCloser);
 
     mpLoopCloser->SetTracker(mpTracker);
     mpLoopCloser->SetLocalMapper(mpLocalMapper);
+
+    if(mSensor==RGBD)
+    {
+        mpTracker->SetStaticPointDeterminator(mpStaticPointDeterminator);
+        mpLocalMapper->SetStaticPointDeterminator(mpStaticPointDeterminator);
+    }
 
     //usleep(10*1000*1000);
 

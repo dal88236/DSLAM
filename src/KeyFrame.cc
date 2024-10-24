@@ -1172,4 +1172,9 @@ void KeyFrame::SetDepthMat(const cv::Mat& depthMat)
     mDepthMat = depthMat.clone();
 }
 
+void KeyFrame::ClearDepthMat()
+{
+    mDepthMat.release();
+}
+
 } //namespace ORB_SLAM

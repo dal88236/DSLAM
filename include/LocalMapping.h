@@ -36,6 +36,7 @@ namespace ORB_SLAM3
 class System;
 class Tracking;
 class LoopClosing;
+class StaticPointDetermination;
 class Atlas;
 
 class LocalMapping
@@ -45,6 +46,7 @@ public:
     LocalMapping(System* pSys, Atlas* pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName=std::string());
 
     void SetLoopCloser(LoopClosing* pLoopCloser);
+    void SetStaticPointDeterminator(StaticPointDetermination* pStaticPointDeterminator);
 
     void SetTracker(Tracking* pTracker);
 
@@ -159,6 +161,7 @@ protected:
     Atlas* mpAtlas;
 
     LoopClosing* mpLoopCloser;
+    StaticPointDetermination* mpStaticPointDeterminator;
     Tracking* mpTracker;
 
     std::list<KeyFrame*> mlNewKeyFrames;

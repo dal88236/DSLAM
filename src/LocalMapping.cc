@@ -23,6 +23,7 @@
 #include "Optimizer.h"
 #include "Converter.h"
 #include "GeometricTools.h"
+#include "StaticPointDetermination.h"
 
 #include<mutex>
 #include<chrono>
@@ -54,6 +55,11 @@ LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, 
 void LocalMapping::SetLoopCloser(LoopClosing* pLoopCloser)
 {
     mpLoopCloser = pLoopCloser;
+}
+
+void LocalMapping::SetStaticPointDeterminator(StaticPointDetermination* pStaticPointDeterminator)
+{
+    mpStaticPointDeterminator = pStaticPointDeterminator;
 }
 
 void LocalMapping::SetTracker(Tracking *pTracker)
@@ -1044,6 +1050,8 @@ void LocalMapping::KeyFrameCulling()
             else
             {
                 pKF->SetBadFlag();
+                if(mpStaticPointDeterminator)
+                    mpStaticPointDeterminator->RemoveKeyFrame(pKF);
             }
         }
         if((count > 20 && mbAbortBA) || count>100)

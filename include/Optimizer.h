@@ -104,6 +104,7 @@ public:
     // Static points segmentation
     void static PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, cv::Mat& imLfDepth, cv::Mat& imCfDepth, Delaunay* dt);
     void static LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map* pMap, int iterations, double th, std::list<MapPoint*>& lpUnmarkedMapPoints);
+    void static LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbStopFlag, Map* pMap, int iterations, double th, std::list<MapPoint*>& lpUnmarkedMapPoints);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 };

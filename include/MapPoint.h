@@ -190,6 +190,8 @@ public:
 
     // Variable used by static point determination
     long unsigned int mnBASPDForKF;
+    long unsigned int mnLastSeenKF;
+    bool mbProcessedBySPD;
 
     // Variables used by loop closing
     long unsigned int mnLoopPointForKF;

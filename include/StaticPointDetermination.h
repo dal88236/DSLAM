@@ -19,7 +19,7 @@
 #ifndef STATIC_POINT_DETERMINATION_H
 #define STATIC_POINT_DETERMINATION_H
 
-#include <queue>
+#include <list>
 #include <mutex>
 
 #include "KeyFrame.h"
@@ -32,12 +32,13 @@ class StaticPointDetermination
 {
 public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    StaticPointDetermination(Atlas* pAtlas, size_t th=10);
+    StaticPointDetermination(Atlas* pAtlas, size_t nQueueTh=6);
 
     // Main function
     void Run();
 
     void InsertKeyFrame(KeyFrame* pKF);
+    void RemoveKeyFrame(KeyFrame* pKF);
 
      // Thread Synch
     void RequestStop();
@@ -61,15 +62,11 @@ public:
         return mlNewKeyFrames.size();
     }
 
-    double GetCurrKFTime();
-    KeyFrame* GetCurrKF();
-
 protected:
-    bool CheckNewKeyFrames();
     bool CheckAllKeyFramesProcessed();
     void ProcessNewKeyFrame();
 
-    void MapPointCulling();
+    void MapPointCulling(unsigned long nKFId);
 
     void ResetIfRequested();
     bool mbResetRequested;
@@ -85,14 +82,11 @@ protected:
 
     Atlas* mpAtlas;
 
-    KeyFrame* mpCurrentKeyFrame;
-
     std::list<MapPoint*> mlpUnmarkedMapPoints;
 
     std::mutex mMutexNewKFs;
 
     std::list<KeyFrame*> mlNewKeyFrames;
-    std::list<KeyFrame*> mlKeyFramesInSW;
 
     bool mbAbortOptimization;
 
@@ -100,9 +94,8 @@ protected:
     bool mbStopRequested;
     bool mbNotStop;
     std::mutex mMutexStop;
-
-    int mnNewKF;
-    int mnProcessedKF;
+    
+    int mnLastProcessedKF;
 
     int mnIterations;
 

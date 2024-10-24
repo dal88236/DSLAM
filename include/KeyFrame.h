@@ -308,6 +308,7 @@ public:
     void GetDepthMat(cv::Mat& depthMat);
     void GetDepthMatRef(cv::Mat& depthMat);
     void SetDepthMat(const cv::Mat& depthMat);
+    void ClearDepthMat();
 
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
 public:
