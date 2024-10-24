@@ -1,4 +1,6 @@
-# ORB-SLAM3
+# DSLAM - Dynamic RGB-D SLAM using point correlations based on ORB-SLAM3 
+
+Parameters to be tuned for better performance
 
 ### V1.0, December 22th, 2021
 **Authors:** Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, [José M. M. Montiel](http://webdiis.unizar.es/~josemari/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/).
@@ -53,7 +55,7 @@ If you use ORB-SLAM3 in an academic work, please cite:
 # 2. Prerequisites
 We have tested the library in **Ubuntu 16.04** and **18.04**, but it should be easy to compile in other platforms. A powerful computer (e.g. i7) will ensure real-time performance and provide more stable and accurate results.
 
-## C++11 or C++0x Compiler
+## C++14 or C++0x Compiler
 We use the new thread and chrono functionalities of C++11.
 
 ## Pangolin
@@ -74,6 +76,9 @@ Required to calculate the alignment of the trajectory with the ground truth. **R
 * (win) http://www.python.org/downloads/windows
 * (deb) `sudo apt install libpython2.7-dev`
 * (mac) preinstalled with osx
+
+## CGAL
+Required to calculate Delaunay triangulation to correlate map points
 
 ## ROS (optional)
 
