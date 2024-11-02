@@ -54,7 +54,7 @@ void StaticPointDetermination::Run()
                 {
                     KeyFrame* pFirstKF = mlNewKeyFrames.front();
                     Map* pCurrentMap = pFirstKF->GetMap();
-                    Optimizer::LocalPointGraphOptimization(mlNewKeyFrames, &mbAbortOptimization, pCurrentMap, mnIterations, 3.5, mlpUnmarkedMapPoints);
+                    Optimizer::LocalPointGraphOptimization(mlNewKeyFrames, &mbAbortOptimization, pCurrentMap, mnIterations, mlpUnmarkedMapPoints);
                 }
                 bDoneSPD = true;
                 mnLastProcessedKF = mlNewKeyFrames.back()->mnId;
@@ -87,7 +87,7 @@ void StaticPointDetermination::MapPointCulling(unsigned long nKFId)
             lit = mlpUnmarkedMapPoints.erase(lit);
         else if(!pMP->isMarked())
         {
-            if(pMP->mnLastSeenKF == nKFId)
+            if(pMP->mnLastSeenKF <= nKFId)
             {
                 pMP->SetBadFlag();
                 lit = mlpUnmarkedMapPoints.erase(lit);

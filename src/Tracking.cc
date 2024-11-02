@@ -1800,8 +1800,8 @@ void Tracking::DetermineStaticPoints()
     // TODO
     // build graph based on tracked map points
     Delaunay dt = GraphBuilder::BuildGraph(mCurrentFrame, mLastFrame);
-    // if(dt.number_of_finite_edges()!=0)
-    //     Optimizer::PointGraphOptimization(&mCurrentFrame, &mLastFrame, mLastDepth, mCurrentDepth, &dt);
+    if(dt.number_of_finite_edges()!=0)
+        Optimizer::PointGraphOptimization(&mCurrentFrame, &mLastFrame, mLastDepth, mCurrentDepth, &dt);
 }
 
 void Tracking::ResetFrameIMU()
@@ -3523,7 +3523,7 @@ void Tracking::UpdateLocalPoints()
                 continue;
             if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)
                 continue;
-            if(!pMP->isBad() || !pMP->isMarked())
+            if(!pMP->isBad() && pMP->isMarked())
             {
                 count_pts++;
                 mvpLocalMapPoints.push_back(pMP);

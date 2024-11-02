@@ -5681,7 +5681,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
     // vcSO3->setFixed(false);
     // optimizer.addVertex(vcSO3);
 
-    const double deltaPointCorreltation = sqrt(7.816);
+    const double deltaPointCorreltation = sqrt(0.5);
 
     std::unordered_set<unsigned long> sId;
 
@@ -5819,16 +5819,16 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
         return;
 
     // TODO Determine th value
-    const double th = 7.816;
+    const double ths[4]={2.0, 1.5, 0.5, 0.5};
 
     size_t nEdges = vpEdgesPointCorrelation.size();
     bool* zInliers = new bool[nEdges];
     std::fill(zInliers, zInliers+nEdges, true);
 
-    for(int i=0; i<5; i++)
+    for(int i=0; i<4; i++)
     {
         optimizer.initializeOptimization(0);
-        optimizer.optimize(1);
+        optimizer.optimize(5);
 
         for(size_t j=0, jend=vpEdgesPointCorrelation.size(); j<jend; j++)
         {
@@ -5839,7 +5839,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
 
             const double chi2 = e->chi2();
 
-            if(chi2>th)
+            if(chi2>ths[i])
             {
                 if(zInliers[j])
                 {
@@ -5866,13 +5866,12 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
         EdgePointCorrelation* e = vpEdgesPointCorrelation[i];
         if(measurementsOfEdge[e->edgeId] == 0)
         {
-            int nSrcVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(1))->id();
-            int nDestVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(2))->id();
+            int nSrcVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(0))->id();
+            int nDestVertexId = dynamic_cast<g2o::VertexSBAPointXYZ*>(e->vertex(1))->id();
             graph.RemoveEdge(nSrcVertexId, nDestVertexId);
             measurementsOfEdge[e->edgeId] = -1; // Processed
         }
     }
-
 
     // Find max connected componenet
     vector<vector<Vertex>> vertexArray;
@@ -6330,7 +6329,7 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
 }
 
 // Optimize the map points observed in the sliding window only
-void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbStopFlag, Map* pMap, int iterations, double th, std::list<MapPoint*>& lpUnmarkedMapPoints)
+void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbStopFlag, Map* pMap, int iterations, std::list<MapPoint*>& lpUnmarkedMapPoints)
 {
     KeyFrame* pFirstKF = lKFs.front();
 
@@ -6402,7 +6401,7 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
 
     Graph graph;
 
-    const double deltaPointCorrelation = sqrt(3.0);
+    const double deltaPointCorrelation = sqrt(0.5);
 
     for(list<MapPoint*>::iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
     {
@@ -6494,10 +6493,12 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
     int vn = optimizer.vertices().size();
     std::cout << "Local SPD: OPTIM edges: " << nOptimEdges << ", vertices: " << vn << ", Kfs: " << (lKFs.size()) << std::endl;
 
-    for(int iteration=0; iteration<3; ++iteration)
+    const double ths[4]={3.0, 1.5, 0.5, 0.5};
+
+    for(int iteration=0; iteration<4; ++iteration)
     {
         optimizer.initializeOptimization(0);
-        optimizer.optimize(3);
+        optimizer.optimize(5);
 
         for(size_t i=0; i<nOptimEdges; i++)
         {
@@ -6511,7 +6512,7 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
 
             const double chi2 = e->chi2();
 
-            if(chi2>th)
+            if(chi2>ths[iteration])
             {
                 if(zInliers[i])
                 {
