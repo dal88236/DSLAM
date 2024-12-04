@@ -5681,7 +5681,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
     // vcSO3->setFixed(false);
     // optimizer.addVertex(vcSO3);
 
-    const double deltaPointCorreltation = sqrt(0.5);
+    const double deltaPointCorreltation = sqrt(2.5);
 
     std::unordered_set<unsigned long> sId;
 
@@ -5742,7 +5742,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
             Eigen::Matrix3d covLf = CalculateCovarianceOfDepthMeasurement(kpLf.pt.x, kpLf.pt.y, imLfDepth, pLastFrame->fx, pLastFrame->fy, pLastFrame->cx, pLastFrame->cy);
             Eigen::Matrix3d covLs = CalculateCovarianceOfDepthMeasurement(kpLs.pt.x, kpLs.pt.y, imLfDepth, pLastFrame->fx, pLastFrame->fy, pLastFrame->cx, pLastFrame->cy);
             
-            if(covLf(2, 2) < 0.03 && covLs(2, 2) < 0.03)
+            if(covLf(2, 2) < 0.02 && covLs(2, 2) < 0.02)
             {
                 EdgePointCorrelation* eLfPc = new EdgePointCorrelation();
                 // eLfPc->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
@@ -5780,7 +5780,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
             Eigen::Matrix3d covCf = CalculateCovarianceOfDepthMeasurement(kpCf.pt.x, kpCf.pt.y, imCfDepth, pCurrentFrame->fx, pCurrentFrame->fy, pCurrentFrame->cx, pCurrentFrame->cy);
             Eigen::Matrix3d covCs = CalculateCovarianceOfDepthMeasurement(kpCs.pt.x, kpCs.pt.y, imCfDepth, pCurrentFrame->fx, pCurrentFrame->fy, pCurrentFrame->cx, pCurrentFrame->cy);
 
-            if(covCf(2, 2) < 0.03 && covCs(2, 2) < 0.03)
+            if(covCf(2, 2) < 0.02 && covCs(2, 2) < 0.02)
             {
                 EdgePointCorrelation* eCfPc = new EdgePointCorrelation();
             
@@ -5819,7 +5819,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
         return;
 
     // TODO Determine th value
-    const double ths[4]={2.0, 1.5, 0.5, 0.5};
+    const double ths[4]={3.0, 3.0, 2.5, 2.5};
 
     size_t nEdges = vpEdgesPointCorrelation.size();
     bool* zInliers = new bool[nEdges];
@@ -5833,6 +5833,9 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
         for(size_t j=0, jend=vpEdgesPointCorrelation.size(); j<jend; j++)
         {
             EdgePointCorrelation* e = vpEdgesPointCorrelation[j];
+
+            if (i == 2)
+                e->setRobustKernel(0);
 
             if(!zInliers[j])
                 e->computeError();
@@ -6039,7 +6042,7 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
 
     Graph graph;
 
-    const double deltaPointCorrelation = sqrt(7.816);
+    const double deltaPointCorrelation = sqrt(2.5);
 
     for(list<MapPoint*>::iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
     {
@@ -6139,7 +6142,7 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
                 pKF->GetDepthMatRef(depthMat);
                 Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
                 Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
-                if(covF(2, 2) < 0.05 && covS(2, 2) < 0.05)
+                if(covF(2, 2) < 0.03 && covS(2, 2) < 0.03)
                 {
                     bFoundEdge = true;
                     EdgePosePointCorrelation* e = new EdgePosePointCorrelation();
@@ -6186,7 +6189,7 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
                 pKF->GetDepthMatRef(depthMat);
                 Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
                 Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
-                if (covF(2, 2) < 0.05 || covS(2, 2) < 0.05)
+                if (covF(2, 2) < 0.03 || covS(2, 2) < 0.03)
                 {
                     bFoundEdge = true;
                     EdgePosePointCorrelation* e = new EdgePosePointCorrelation();
@@ -6401,7 +6404,7 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
 
     Graph graph;
 
-    const double deltaPointCorrelation = sqrt(0.5);
+    const double deltaPointCorrelation = sqrt(2.5);
 
     for(list<MapPoint*>::iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
     {
@@ -6493,12 +6496,12 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
     int vn = optimizer.vertices().size();
     std::cout << "Local SPD: OPTIM edges: " << nOptimEdges << ", vertices: " << vn << ", Kfs: " << (lKFs.size()) << std::endl;
 
-    const double ths[4]={3.0, 1.5, 0.5, 0.5};
+    const double ths[4]={3.0, 3.0, 2.5, 2.5};
 
     for(int iteration=0; iteration<4; ++iteration)
     {
         optimizer.initializeOptimization(0);
-        optimizer.optimize(5);
+        optimizer.optimize(1);
 
         for(size_t i=0; i<nOptimEdges; i++)
         {

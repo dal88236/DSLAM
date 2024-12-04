@@ -1,0 +1,17 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting rosbags
+  Downloading rosbags-0.9.23-py3-none-any.whl (102 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 102.7/102.7 kB 454.0 kB/s eta 0:00:00
+Collecting ruamel.yaml
+  Downloading ruamel.yaml-0.18.6-py3-none-any.whl (117 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 117.8/117.8 kB 972.0 kB/s eta 0:00:00
+Requirement already satisfied: lz4 in /usr/lib/python3/dist-packages (from rosbags) (3.0.2+dfsg)
+Collecting zstandard
+  Downloading zstandard-0.23.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (5.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.4/5.4 MB 2.7 MB/s eta 0:00:00
+Requirement already satisfied: numpy in /home/weiche/.local/lib/python3.8/site-packages (from rosbags) (1.24.4)
+Collecting ruamel.yaml.clib>=0.2.7
+  Downloading ruamel.yaml.clib-0.2.8-cp38-cp38-manylinux_2_5_x86_64.manylinux1_x86_64.whl (596 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 596.0/596.0 kB 3.5 MB/s eta 0:00:00
+Installing collected packages: zstandard, ruamel.yaml.clib, ruamel.yaml, rosbags
+Successfully installed rosbags-0.9.23 ruamel.yaml-0.18.6 ruamel.yaml.clib-0.2.8 zstandard-0.23.0
