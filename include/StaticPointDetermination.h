@@ -32,7 +32,7 @@ class StaticPointDetermination
 {
 public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    StaticPointDetermination(Atlas* pAtlas, size_t nQueueTh=6);
+    StaticPointDetermination(Atlas* pAtlas, size_t nQueueTh=8);
 
     // Main function
     void Run();

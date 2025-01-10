@@ -1799,9 +1799,9 @@ void Tracking::DetermineStaticPoints()
 {
     // TODO
     // build graph based on tracked map points
-    Delaunay dt = GraphBuilder::BuildGraph(mCurrentFrame, mLastFrame);
-    if(dt.number_of_finite_edges()!=0)
-        Optimizer::PointGraphOptimization(&mCurrentFrame, &mLastFrame, mLastDepth, mCurrentDepth, &dt);
+    // Delaunay dt = GraphBuilder::BuildGraph(mCurrentFrame, mLastFrame);
+    // if(dt.number_of_finite_edges()!=0)
+    //     Optimizer::PointGraphOptimization(&mCurrentFrame, &mLastFrame, mLastDepth, mCurrentDepth, &dt);
 }
 
 void Tracking::ResetFrameIMU()
@@ -2481,8 +2481,8 @@ void Tracking::StereoInitialization()
 
         mpLocalMapper->InsertKeyFrame(pKFini);
 
-        if(mSensor==System::RGBD)
-            mpStaticPointDeterminator->InsertKeyFrame(pKFini);
+        // if(mSensor==System::RGBD)
+        //     mpStaticPointDeterminator->InsertKeyFrame(pKFini);
 
         mLastFrame = Frame(mCurrentFrame);
         mnLastKeyFrameId = mCurrentFrame.mnId;
@@ -3410,11 +3410,11 @@ void Tracking::CreateNewKeyFrame()
 
     mpLocalMapper->SetNotStop(false);
 
-    if(mSensor==System::RGBD)
-    {
-        mpStaticPointDeterminator->InsertKeyFrame(pKF);
-        mpStaticPointDeterminator->SetNotStop(false);
-    }
+    // if(mSensor==System::RGBD)
+    // {
+    //     mpStaticPointDeterminator->InsertKeyFrame(pKF);
+    //     mpStaticPointDeterminator->SetNotStop(false);
+    // }
 
     mnLastKeyFrameId = mCurrentFrame.mnId;
     mpLastKeyFrame = pKF;
