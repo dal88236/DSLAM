@@ -5634,7 +5634,7 @@ Eigen::Matrix3d CalculateCovarianceOfDepthMeasurement(int u, int v, cv::Mat& imD
 
     if(applyRegularization)
     {
-        constexpr float lambda = 0.0001;
+        constexpr float lambda = 0.00001;
         cov += lambda * Eigen::Matrix3d::Identity();
     }
 
@@ -5650,7 +5650,7 @@ void Optimizer::PointGraphOptimization(Frame *pCurrentFrame, Frame *pLastFrame, 
 
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
     optimizer.setAlgorithm(solver);
-    optimizer.setVerbose(true);
+    optimizer.setVerbose(false);
 
     // Set MapPoint vertices
     const int N = pCurrentFrame->N;
@@ -6239,9 +6239,6 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
         for(size_t i=0; i<nOptimEdges; i++)
         {
             EdgePosePointCorrelation* e = vpEdgesPointCorrelation[i];
-
-            if(i==2)
-                e->setRobustKernel(0);
             
             if(!zInliers[i])
                 e->computeError();
@@ -6266,6 +6263,9 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
                     ++measurementsOfEdge[e->edgeId];
                 }
             }
+
+            if(i==2)
+                e->setRobustKernel(0);
         }
     }
 
@@ -6334,6 +6334,7 @@ void Optimizer::LocalPointGraphOptimization(KeyFrame* pKF, bool* pbStopFlag, Map
 // Optimize the map points observed in the sliding window only
 void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbStopFlag, Map* pMap, int iterations, std::list<MapPoint*>& lpUnmarkedMapPoints)
 {
+    auto start = std::chrono::system_clock::now();
     KeyFrame* pFirstKF = lKFs.front();
 
     list<MapPoint*> lLocalMapPoints;
@@ -6404,7 +6405,7 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
 
     Graph graph;
 
-    const double deltaPointCorrelation = sqrt(2.5);
+    const double deltaPointCorrelation = sqrt(0.5);
 
     for(list<MapPoint*>::iterator it=lLocalMapPoints.begin(), iend=lLocalMapPoints.end(); it!=iend; it++)
     {
@@ -6454,7 +6455,7 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
                 pKF->GetDepthMatRef(depthMat);
                 Eigen::Matrix3d covF = CalculateCovarianceOfDepthMeasurement(kpF.pt.x, kpF.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
                 Eigen::Matrix3d covS = CalculateCovarianceOfDepthMeasurement(kpS.pt.x, kpS.pt.y, depthMat, pKF->fx, pKF->fy, pKF->cx, pKF->cy);
-                if(covF(2, 2) < 0.03 && covS(2, 2) < 0.03)
+                if(covF(2, 2) < 0.02 && covS(2, 2) < 0.02)
                 {
                     bFoundEdge = true;
                     EdgePosePointCorrelation* e = new EdgePosePointCorrelation();
@@ -6496,19 +6497,16 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
     int vn = optimizer.vertices().size();
     std::cout << "Local SPD: OPTIM edges: " << nOptimEdges << ", vertices: " << vn << ", Kfs: " << (lKFs.size()) << std::endl;
 
-    const double ths[4]={3.0, 3.0, 2.5, 2.5};
+    const double ths[4]={1.5, 1.0, 0.8, 0.5};
 
     for(int iteration=0; iteration<4; ++iteration)
     {
         optimizer.initializeOptimization(0);
-        optimizer.optimize(1);
+        optimizer.optimize(3);
 
         for(size_t i=0; i<nOptimEdges; i++)
         {
             EdgePosePointCorrelation* e = vpEdgesPointCorrelation[i];
-
-            if(i==1)
-                e->setRobustKernel(0);
             
             if(!zInliers[i])
                 e->computeError();
@@ -6533,6 +6531,9 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
                     ++measurementsOfEdge[e->edgeId];
                 }
             }
+
+            if(i==2)
+                e->setRobustKernel(0);
         }
     }
 
@@ -6595,6 +6596,10 @@ void Optimizer::LocalPointGraphOptimization(std::list<KeyFrame*> lKFs, bool* pbS
     }
 
     std::cout << "Local SPD: Found " << outliers << " outliers" << std::endl;
+
+    auto end = std::chrono::system_clock::now();
+    double duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "Local SPD took: " << duration << std::endl;
 
     delete[] zInliers;
 }
